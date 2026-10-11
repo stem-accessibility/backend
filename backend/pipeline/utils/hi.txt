@@ -1,0 +1,87 @@
+def consolidate_edges_debug(yolo_objects, threshold=15):
+    def get_direction(bbox):
+        (x1, y1), (x2, y2) = bbox
+        return "vertical" if abs(y2 - y1) > abs(x2 - x1) else "horizontal"
+
+    def boxes_align_and_near(b1, b2, direction, threshold=15):
+        (x1a, y1a), (x2a, y2a) = b1
+        (x1b, y1b), (x2b, y2b) = b2
+
+        if direction == "vertical":
+            x_overlap = max(0, min(x2a, x2b) - max(x1a, x1b))
+            vertical_gap = min(abs(y1a - y2b), abs(y2a - y1b))
+            return x_overlap > 0 and vertical_gap <= threshold
+        else:
+            y_overlap = max(0, min(y2a, y2b) - max(y1a, y1b))
+            horizontal_gap = min(abs(x1a - x2b), abs(x2a - x1b))
+            return y_overlap > 0 and horizontal_gap <= threshold
+
+    def is_contained(inner, outer):
+        (x1i, y1i), (x2i, y2i) = inner
+        (x1o, y1o), (x2o, y2o) = outer
+        return x1o <= x1i and y1o <= y1i and x2i <= x2o and y2i <= y2o
+
+    # Step 1: Filter edges
+    edge_objs = [obj for obj in yolo_objects if obj["class_name"] in ["solid_edge", "dashed_edge"]]
+    print(f"\n🔍 Starting with {len(edge_objs)} edge candidates...")
+
+    # Remove contained
+    filtered = []
+    for i, e1 in enumerate(edge_objs):
+        contained = False
+        for j, e2 in enumerate(edge_objs):
+            if i != j and is_contained(e1["bounding_box"], e2["bounding_box"]):
+                print(f"❌ Removing edge {i} (contained in {j})")
+                contained = True
+                break
+        if not contained:
+            filtered.append(e1)
+    edge_objs = filtered
+    print(f"✅ {len(edge_objs)} edges after containment filter")
+
+    # Step 2: Full grouping (recursive-like loop)
+    used = set()
+    consolidated = []
+
+    for i in range(len(edge_objs)):
+        if i in used:
+            continue
+
+        group = []
+        queue = deque([i])
+        dir_i = get_direction(edge_objs[i]["bounding_box"])
+
+        while queue:
+            idx = queue.popleft()
+            if idx in used:
+                continue
+            used.add(idx)
+            group.append(edge_objs[idx])
+
+            for j in range(len(edge_objs)):
+                if j in used or j == idx:
+                    continue
+                if (
+                    edge_objs[j]["class_name"] == edge_objs[idx]["class_name"] and
+                    get_direction(edge_objs[j]["bounding_box"]) == get_direction(edge_objs[idx]["bounding_box"]) and
+                    boxes_align_and_near(edge_objs[idx]["bounding_box"], edge_objs[j]["bounding_box"], get_direction(edge_objs[idx]["bounding_box"]), threshold)
+                ):
+                    queue.append(j)
+                # keep chaining overlaps!
+
+        # Merge group
+        xs = [pt[0] for e in group for pt in e["bounding_box"]]
+        ys = [pt[1] for e in group for pt in e["bounding_box"]]
+        consolidated.append({
+            "class_name": group[0]["class_name"],
+            "bounding_box": [(min(xs), min(ys)), (max(xs), max(ys))],
+            "label": next((e.get("label") for e in group if e.get("label")), None),
+            "arrowheads": sum([e.get("arrowheads", []) for e in group], [])
+        })
+        print(f"✅ Group {len(consolidated)} has {len(group)} boxes → {consolidated[-1]['bounding_box']}")
+
+    print(f"\n🎯 Final: {len(consolidated)} consolidated edges")
+
+    # Final output
+    others = [obj for obj in yolo_objects if obj["class_name"] not in ["solid_edge", "dashed_edge"]]
+    return others + consolidated

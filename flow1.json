@@ -1,0 +1,169 @@
+{
+    "title": "1-Copyright Renewal Process",
+    "nodes": [
+        {
+            "id": "node1",
+            "label": "Published over 95 years ago?",
+            "shape": "rectangle",
+            "coordinates": {
+                "x": 100,
+                "y": 100
+            },
+            "incomingNodes": 0,
+            "outgoingNodes": 2
+        },
+        {
+            "id": "node2",
+            "label": "Work renewed?",
+            "shape": "rectangle",
+            "coordinates": {
+                "x": 200,
+                "y": 200
+            },
+            "incomingNodes": 1,
+            "outgoingNodes": 2
+        },
+        {
+            "id": "node3",
+            "label": "Periodical renewed?",
+            "shape": "rectangle",
+            "coordinates": {
+                "x": 300,
+                "y": 300
+            },
+            "incomingNodes": 1,
+            "outgoingNodes": 2
+        },
+        {
+            "id": "node4",
+            "label": "Author died before renewal?",
+            "shape": "rectangle",
+            "coordinates": {
+                "x": 400,
+                "y": 400
+            },
+            "incomingNodes": 1,
+            "outgoingNodes": 2
+        },
+        {
+            "id": "node5",
+            "label": "OK!",
+            "shape": "rectangle",
+            "coordinates": {
+                "x": 500,
+                "y": 500
+            },
+            "incomingNodes": 3,
+            "outgoingNodes": 0
+        },
+        {
+            "id": "node6",
+            "label": "Not OK",
+            "shape": "rectangle",
+            "coordinates": {
+                "x": 600,
+                "y": 600
+            },
+            "incomingNodes": 2,
+            "outgoingNodes": 0
+        }
+    ],
+    "edges": [
+        {
+            "id": "edge1",
+            "source": "node1",
+            "destination": "node5",
+            "style": "solid",
+            "arrows": {
+                "start": false,
+                "end": true
+            },
+            "label": "Yes",
+            "type": "solid"
+        },
+        {
+            "id": "edge2",
+            "source": "node1",
+            "destination": "node2",
+            "style": "solid",
+            "arrows": {
+                "start": false,
+                "end": true
+            },
+            "label": "No",
+            "type": "solid"
+        },
+        {
+            "id": "edge3",
+            "source": "node2",
+            "destination": "node6",
+            "style": "solid",
+            "arrows": {
+                "start": false,
+                "end": true
+            },
+            "label": "Yes",
+            "type": "solid"
+        },
+        {
+            "id": "edge4",
+            "source": "node2",
+            "destination": "node3",
+            "style": "solid",
+            "arrows": {
+                "start": false,
+                "end": true
+            },
+            "label": "No",
+            "type": "solid"
+        },
+        {
+            "id": "edge5",
+            "source": "node3",
+            "destination": "node4",
+            "style": "solid",
+            "arrows": {
+                "start": false,
+                "end": true
+            },
+            "label": "Yes",
+            "type": "solid"
+        },
+        {
+            "id": "edge6",
+            "source": "node3",
+            "destination": "node5",
+            "style": "solid",
+            "arrows": {
+                "start": false,
+                "end": true
+            },
+            "label": "No",
+            "type": "solid"
+        },
+        {
+            "id": "edge7",
+            "source": "node4",
+            "destination": "node5",
+            "style": "solid",
+            "arrows": {
+                "start": false,
+                "end": true
+            },
+            "label": "Yes",
+            "type": "solid"
+        },
+        {
+            "id": "edge8",
+            "source": "node4",
+            "destination": "node6",
+            "style": "solid",
+            "arrows": {
+                "start": false,
+                "end": true
+            },
+            "label": "No",
+            "type": "solid"
+        }
+    ]
+}

@@ -1,0 +1,10 @@
+# Prevent unnecessary directories/files from being deployed to Heroku
+venv/
+access_flow/
+*.pkl
+*.csv
+*.png
+*.jpeg
+*.jpg
+node_modules/
+.git/
