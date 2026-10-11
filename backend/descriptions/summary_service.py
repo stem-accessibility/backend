@@ -79,18 +79,23 @@ TASK
 Return ONLY a JSON object in a ```json code fence``` with this exact structure:
 
 {{
-  "alt_text": "1-2 sentences",
   "long_description_sections": {{
     "purpose": "string",
     "structure": "string",
     "keyComponents": "string",
     "traversal": "string",
     "mainTakeaway": "string"
-  }}
+  }},
+  "alt_text": "2-3 sentences: what the diagram is and covers, then the main takeaway from mainTakeaway above"
 }}
 
+Write the long_description_sections first and alt_text last, so alt_text can reuse the mainTakeaway.
+
 REQUIREMENTS
-- alt_text must be 1-2 sentences and should not start with "Image of"
+- alt_text must be 2-3 short sentences and should not start with "Image of"
+- alt_text MUST end with the main takeaway: its last sentence restates mainTakeaway in one short
+  sentence. The earlier sentence(s) say what kind of diagram it is and what it covers. A reader who
+  only hears the alt text should still learn the most important point.
 - long_description_sections must use the exact five keys above
 - Use the actual concept names from the diagram
 - Do not invent missing nodes, edges, labels, or categories
