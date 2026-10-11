@@ -48,7 +48,7 @@ RUN_JOBS_INLINE=1
 |---|---|
 | `AUTH_MODE=dev` | Skips token verification; every request is one fixed local user (`dev@localhost`). Refused on Cloud Run. |
 | `AUTO_CREATE_TABLES=1` | Creates the tables in the SQLite file on first start, so you can skip `make migrate`. |
-| `DATABASE_URL=sqlite:///db.sqlite` | A local file, created in the repo root. |
+| `DATABASE_URL=sqlite:///db.sqlite` | A local file; Flask puts it at `instance/db.sqlite`. |
 | `RUN_JOBS_INLINE=1` | Runs each upload job inside the request, so no separate worker process is needed. |
 
 Start it:
