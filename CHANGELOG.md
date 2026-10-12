@@ -8,8 +8,9 @@ database change lists the migration to run **before** deploying (`make migrate`)
 
 ## [0.2.0] — 2026-10-11
 
-Not yet deployed to Cloud Run (add the revision name here once it is). The database is already at
-migration 0003; `make migrate` is a no-op.
+Deployed to Cloud Run (us-west1) from commit 47801cb. The database was already at migration 0003, so
+`make migrate` was a no-op. Verified: `PUT /flowcharts/<id>/sharing` answers 401 without a token and
+`GET /repo` answers 200.
 
 ### Added
 - `PUT /flowcharts/<id>/sharing` with `{"sharing": "public" | "link" | "private", "image_public": bool}`:
