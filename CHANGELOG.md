@@ -6,6 +6,12 @@ database change lists the migration to run **before** deploying (`make migrate`)
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-10-11
+
+Deployed to Cloud Run (us-west1) from commit 7fdad86. Migration 0004 (`reports`) was applied first.
+Verified on the live service: `GET /guest/image` answers 400 without a token and 200 with one, a report for
+an unknown page answers 404, the CORS preflight allows `X-Guest-Token`, and `GET /repo` answers 200.
+
 ### Added
 - Try it (no account): `GET/PUT/DELETE /guest/image` and `POST /guest/claim`. A browser token
   (`X-Guest-Token`, hashed into `guest:<hash>`) owns one public image; guests cannot use uploads or AI, always
