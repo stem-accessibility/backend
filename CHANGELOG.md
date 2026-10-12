@@ -7,6 +7,21 @@ database change lists the migration to run **before** deploying (`make migrate`)
 ## [Unreleased]
 
 ### Added
+- `PUT /flowcharts/<id>/sharing` with `{"sharing": "public" | "link" | "private", "image_public": bool}`:
+  one setting that sets visibility and publication together (public = page + listed, link = page only,
+  private = owner only). `POST /flowcharts` accepts `sharing`; responses include `sharing` and `image_public`.
+- `image_public` column: the uploaded source image is served on public pages only when the owner opts in.
+  **Migration 0003 — run `make migrate` before deploying.** It backfills `image_public = true` for rows that
+  are already published, so existing public pages are unchanged.
+- `tests/test_sharing.py` (`python -m unittest tests.test_sharing`).
+
+### Changed
+- `POST /publish/<id>` and `POST /research/<id>` (deprecated) now use the same helper. Setting
+  visibility to public through `/research` also publishes, so a diagram can no longer be public but
+  invisible. They keep working for the deployed frontend until the rename (issue #1).
+- `GET /p/<slug>` reports `has_image` only when the source image is shared.
+
+### Added
 - `AUTH_MODE=dev`: run the API without a Supabase project (fixed local user, SQLite).
   Refused when `K_SERVICE` is set, so it cannot start on Cloud Run.
 
