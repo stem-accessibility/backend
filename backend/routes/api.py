@@ -17,6 +17,7 @@ from backend.pipeline.pipeline2 import process_image
 from dotenv import load_dotenv
 from backend.mermaid_parser import parse_mermaid_flowchart_td
 from backend.auth import require_auth
+from backend.guest import is_guest_owner
 from flask import g
 import tempfile
 from backend.descriptions.deterministic_longdesc import build_deterministic_outline
@@ -114,6 +115,7 @@ def serialize_flowchart(r: Flowchart, include_json: bool = True, public_mode: bo
         "sharing": current_sharing(r),
         "image_public": image_public,
         "flowchart_type": getattr(r, "flowchart_type", "unknown"),
+        "guest": is_guest_owner(getattr(r, "owner_id", None)),
         "summary": r.summary,
         "has_image": has_image,
         "image_mime": getattr(r, "image_mime", None),

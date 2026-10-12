@@ -149,3 +149,11 @@ class ResearchEvent(db.Model):
     event_data = db.Column(db.JSON, nullable=True)
 
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.datetime.utcnow)
+
+class Report(db.Model):
+    """A visitor's report about a public page (spam, abuse, or content that should not be shared)."""
+    __tablename__ = "reports"
+    id = db.Column(db.Integer, primary_key=True)
+    public_slug = db.Column(db.String(64), nullable=False, index=True)
+    reason = db.Column(db.String(500), nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)

@@ -24,7 +24,7 @@ class SharingTests(unittest.TestCase):
     def setUpClass(cls):
         cls.app = create_app()
         cls.c = cls.app.test_client()
-        assert "test.sqlite" in cls.app.config["SQLALCHEMY_DATABASE_URI"]
+        assert cls.app.config["SQLALCHEMY_DATABASE_URI"].startswith("sqlite:///")  # never a real database
 
     def make(self, **extra):
         body = {"json_data": {"nodes": [], "edges": []}, "title": "t", "image_data_url": IMG,

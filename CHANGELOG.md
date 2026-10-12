@@ -6,6 +6,16 @@ database change lists the migration to run **before** deploying (`make migrate`)
 
 ## [Unreleased]
 
+### Added
+- Try it (no account): `GET/PUT/DELETE /guest/image` and `POST /guest/claim`. A browser token
+  (`X-Guest-Token`, hashed into `guest:<hash>`) owns one public image; guests cannot use uploads or AI, always
+  share publicly, and are limited in size (200 nodes, 400 edges, text lengths) and rate (per token and per IP,
+  per process). `claim` moves the image into an account after sign-up. Responses include `guest: true`.
+- `POST /p/<slug>/report` stores a report (table `reports`, **migration 0004 — run `make migrate` before
+  deploying**); `flask takedown <slug>` unpublishes and hides a page.
+- CORS allows the `X-Guest-Token` header.
+- `tests/test_guest.py`.
+
 ## [0.2.0] — 2026-10-11
 
 Deployed to Cloud Run (us-west1) from commit 47801cb. The database was already at migration 0003, so
