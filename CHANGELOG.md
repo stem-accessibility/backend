@@ -6,6 +6,11 @@ database change lists the migration to run **before** deploying (`make migrate`)
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-10-11
+
+Not yet deployed to Cloud Run (add the revision name here once it is). The database is already at
+migration 0003; `make migrate` is a no-op.
+
 ### Added
 - `PUT /flowcharts/<id>/sharing` with `{"sharing": "public" | "link" | "private", "image_public": bool}`:
   one setting that sets visibility and publication together (public = page + listed, link = page only,
