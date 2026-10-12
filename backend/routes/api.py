@@ -61,10 +61,47 @@ def extract_json_fenced(text: str) -> dict:
         raise ValueError("No ```json fenced block found.")
     return json.loads(m.group(1))
 
+SHARING_STATES = ("public", "link", "private")
+
+
+def current_sharing(r: Flowchart) -> str:
+    """
+    The one setting people see: "public" (listed + has a link), "link" (has a link, not listed),
+    or "private". Derived from the two stored flags, so a row that is marked public but was never
+    published reads as "private" (which is what visitors actually get).
+    """
+    if not getattr(r, "is_published", False):
+        return "private"
+    return "public" if getattr(r, "visibility", "private") == "public" else "link"
+
+
+def apply_sharing(r: Flowchart, sharing: str) -> None:
+    """
+    Set visibility + publication together so they cannot drift apart. The slug is kept when
+    unpublishing, so re-sharing restores the same link.
+    """
+    if sharing not in SHARING_STATES:
+        raise ValueError("sharing must be 'public', 'link', or 'private'")
+    if sharing == "private":
+        r.visibility = "private"
+        r.is_published = False
+        r.published_at = None
+        return
+    r.visibility = "public" if sharing == "public" else "private"
+    if not r.public_slug:
+        r.public_slug = uuid.uuid4().hex[:12]
+    if not r.is_published:
+        r.is_published = True
+        r.published_at = datetime.utcnow()
+
+
 def serialize_flowchart(r: Flowchart, include_json: bool = True, public_mode: bool = False):
     has_image = bool(getattr(r, "image_data_url", None))
+    image_public = bool(getattr(r, "image_public", False))
 
     if public_mode:
+        # Visitors only see the source image when the owner chose to share it.
+        has_image = has_image and image_public
         image_endpoint = f"/p/{r.public_slug}/image" if (has_image and r.public_slug and r.is_published) else None
     else:
         image_endpoint = f"/get/{r.flowchart_id}/image" if has_image else None
@@ -74,6 +111,8 @@ def serialize_flowchart(r: Flowchart, include_json: bool = True, public_mode: bo
         "title": getattr(r, "title", None),
         "short_alt": getattr(r, "short_alt", None),
         "visibility": getattr(r, "visibility", "private"),
+        "sharing": current_sharing(r),
+        "image_public": image_public,
         "flowchart_type": getattr(r, "flowchart_type", "unknown"),
         "summary": r.summary,
         "has_image": has_image,
@@ -145,10 +184,14 @@ def create_flowchart():
     """
     Create a flowchart row.
     Required: json_data (dict/list), summary (str)
-    Optional: flowchart_id, title, short_alt, visibility, flowchart_type, image_data_url, image_mime
+    Optional: flowchart_id, title, short_alt, sharing ("public" | "link" | "private"; default
+    "private"), image_public, flowchart_type, image_data_url, image_mime.
+    The older "visibility" field is still accepted ("public" -> sharing "public").
     """
     try:
         data = request.get_json(silent=True) or {}
+        if data.get("sharing") is not None and data["sharing"] not in SHARING_STATES:
+            return error(400, "sharing must be 'public', 'link', or 'private'")
 
         json_data = data.get("json_data")
         summary = data.get("summary")
@@ -176,11 +219,16 @@ def create_flowchart():
             summary=summary,
             title=data.get("title"),
             short_alt=short_alt,
-            visibility=data.get("visibility", "private"),
             flowchart_type=data.get("flowchart_type", "unknown"),
             image_data_url=data.get("image_data_url"),
             image_mime=data.get("image_mime"),
+            image_public=bool(data.get("image_public", False)),
         )
+        # "sharing" is preferred; the older "visibility" field maps onto it.
+        sharing = data.get("sharing")
+        if sharing is None:
+            sharing = "public" if data.get("visibility") == "public" else "private"
+        apply_sharing(r, sharing)
 
         db.session.add(r)
         db.session.commit()
@@ -326,6 +374,46 @@ def delete_flowchart(flowchart_id):
         return error(500, str(e))
 
 
+# -------- Sharing (who can see it) --------
+@api_bp.route("/flowcharts/<flowchart_id>/sharing", methods=["PUT"])
+@require_auth
+def set_sharing(flowchart_id):
+    """
+    One setting for who can see a diagram. Replaces the separate publish + repo-visibility calls.
+    Body: {"sharing": "public" | "link" | "private", "image_public": bool (optional)}
+      public  -> has a /p/<slug> page and is listed in Browse
+      link    -> has a /p/<slug> page, not listed
+      private -> only the owner
+    image_public controls whether the uploaded source image is shown on the shared page.
+    """
+    try:
+        r = get_owned_flowchart_or_404(flowchart_id)
+        if not r:
+            return error(404, "Flowchart not found")
+
+        data = request.get_json(silent=True) or {}
+        sharing = data.get("sharing")
+        if sharing not in SHARING_STATES:
+            return error(400, "sharing must be 'public', 'link', or 'private'")
+        if "image_public" in data and not isinstance(data["image_public"], bool):
+            return error(400, "image_public must be true or false")
+
+        apply_sharing(r, sharing)
+        if "image_public" in data:
+            r.image_public = data["image_public"]
+
+        db.session.commit()
+        return jsonify({
+            **serialize_flowchart(r, include_json=False),
+            "public_url": f"/p/{r.public_slug}" if r.is_published and r.public_slug else None,
+        }), 200
+
+    except Exception as e:
+        print("Error in PUT /flowcharts/<flowchart_id>/sharing:", traceback.format_exc())
+        db.session.rollback()
+        return error(500, str(e))
+
+
 # -------- Publishing (permalink) --------
 @api_bp.route("/publish/<flowchart_id>", methods=["POST"])
 @require_auth
@@ -342,14 +430,11 @@ def publish_flowchart(flowchart_id):
         data = request.get_json(silent=True) or {}
         publish = bool(data.get("publish", True))
 
+        # Deprecated: use PUT /flowcharts/<id>/sharing. Kept so older clients keep working.
         if publish:
-            if not r.public_slug:
-                r.public_slug = uuid.uuid4().hex[:12]
-            r.is_published = True
-            r.published_at = datetime.utcnow()
+            apply_sharing(r, "public" if r.visibility == "public" else "link")
         else:
-            r.is_published = False
-            r.published_at = None
+            apply_sharing(r, "private")
 
         db.session.commit()
 
@@ -375,7 +460,7 @@ def get_published_flowchart(public_slug):
     )
     if not r:
         return error(404, "Not found")
-    return jsonify(serialize_flowchart(r, include_json=True)), 200
+    return jsonify(serialize_flowchart(r, include_json=True, public_mode=True)), 200
 
 
 
@@ -383,7 +468,7 @@ def get_published_flowchart(public_slug):
 def get_published_flowchart_image(public_slug):
     r = (
         Flowchart.query
-        .filter_by(public_slug=public_slug, is_published=True)
+        .filter_by(public_slug=public_slug, is_published=True, image_public=True)
         .filter(Flowchart.deleted_at.is_(None))
         .first()
     )
@@ -409,9 +494,11 @@ def set_repo_visibility(flowchart_id):
         if v not in ["public", "private"]:
             return error(400, "visibility must be 'public' or 'private'")
 
-        r.visibility = v
+        # Deprecated: use PUT /flowcharts/<id>/sharing. "public" now also publishes, so a row
+        # can no longer be marked public yet stay invisible.
+        apply_sharing(r, "public" if v == "public" else ("link" if r.is_published else "private"))
         db.session.commit()
-        return jsonify({"flowchart_id": r.flowchart_id, "visibility": r.visibility}), 200
+        return jsonify({"flowchart_id": r.flowchart_id, "visibility": r.visibility, "sharing": current_sharing(r)}), 200
 
     except Exception as e:
         print("Error in POST /repo/<flowchart_id>:", traceback.format_exc())

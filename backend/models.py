@@ -24,6 +24,9 @@ class Flowchart(db.Model):
     # (independent of permalink publishing)
     visibility = db.Column(db.String(16), nullable=False, default="private")
     flowchart_type = db.Column(db.String(16), nullable=False, default="unknown")
+    # Whether the uploaded source image is served on the public page (/p/<slug>/image).
+    # Off by default: sharing a source image is a separate choice from sharing the page.
+    image_public = db.Column(db.Boolean, nullable=False, default=False, server_default=db.false())
 
     # Soft delete
     deleted_at = db.Column(db.DateTime, nullable=True)
