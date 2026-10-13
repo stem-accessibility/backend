@@ -205,7 +205,7 @@ def extract_chart(image_path: str, *, allow_llm: bool, mode: Optional[str] = Non
     if allow_llm:
         try:
             return extract_with_llm(image_path)
-        except ExtractionError as e:
+        except (ExtractionError, RuntimeError) as e:
             local.warnings.append(f"The AI model could not read this chart ({e}); showing the built-in reader's result, which may be incomplete.")
             return local
     local.warnings.append(
