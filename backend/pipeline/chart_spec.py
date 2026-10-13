@@ -43,7 +43,7 @@ def build_spec(dataset, config):
             "color": {"field": cat, "type": "nominal", "title": x_title},
         }
     else:
-        sort_x = None if preset == "line" else None
+        sort_x = None
         spec["mark"] = {"type": "line", "point": True} if preset == "line" else {"type": "bar"}
         spec["encoding"] = {
             "x": {"field": cat, "type": "ordinal", "title": x_title, "sort": sort_x},
