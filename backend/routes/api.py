@@ -9,19 +9,12 @@ import time
 import os
 import base64    
 import traceback
-import numpy as np
-from io import BytesIO
 from backend.db import db
-#from backend.pipeline.pipeline import process_image
-from backend.pipeline.pipeline2 import process_image
 from dotenv import load_dotenv
 from backend.mermaid_parser import parse_mermaid_flowchart_td
-from backend.auth import require_auth
+from backend.auth import optional_user, require_auth
 from backend.guest import client_ip, is_guest_owner, limiter
 from flask import g
-import tempfile
-from backend.descriptions.deterministic_longdesc import build_deterministic_outline
-from backend.descriptions.summary_service import generate_summary_bundle
 import uuid
 # Import models after initializing db to avoid circular imports
 from backend.models import Flowchart, LongDescription
@@ -522,103 +515,6 @@ def list_repo_flowcharts():
     )
     return jsonify([serialize_flowchart(r, include_json=False, public_mode=True) for r in rows]), 200
 
-# -------- Image processing pipeline --------
-@api_bp.route('/upload', methods=['POST'])
-def upload():
-    """
-    Upload an image, run pipeline, return:
-      - mermaid_json
-      - mermaid_code
-      - image_data_url (base64)
-      - image_mime
-    """
-    try:
-        if "file" not in request.files:
-            return error(400, "No file provided")
-
-        file = request.files["file"]
-        img_bytes = file.read()
-        if not img_bytes:
-            return error(400, "Empty file")
-
-        # Write to temp file for your existing pipeline
-        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
-            tmp.write(img_bytes)
-            tmp_path = tmp.name
-
-        try:
-            json_data = process_image(tmp_path, base_name="uploaded")
-            mermaid_code = json_to_mermaid(json_data)
-        finally:
-            try:
-                os.remove(tmp_path)
-            except Exception:
-                pass
-
-        image_data_url = "data:image/png;base64," + base64.b64encode(img_bytes).decode("utf-8")
-
-        return jsonify({
-            "mermaid_json": json_data,
-            "mermaid_code": mermaid_code,
-            "image_data_url": image_data_url,
-            "image_mime": "image/png",
-            "message": "Successfully processed image.",
-        }), 200
-
-    except Exception as e:
-        print("Error in /upload:", traceback.format_exc())
-        return error(500, str(e))
-
-@api_bp.route("/generate-outline", methods=["POST"])
-def generate_outline():
-  """
-  Deterministic (no LLM):
-  Input: diagram JSON (either raw, or { "diagram": {...} })
-  Output: { diagram_type, outline_markdown }
-  """
-  try:
-    payload = request.get_json(silent=True) or {}
-    diagram_json = payload.get("diagram", payload)
-
-    if not diagram_json:
-      return jsonify({"error": "No JSON payload provided."}), 400
-
-    result = build_deterministic_outline(diagram_json)
-    return jsonify(result), 200
-
-  except Exception as e:
-    print("Error in /generate-outline:", traceback.format_exc())
-    return jsonify({"error": str(e)}), 500
-  
-@api_bp.route('/generate-summary', methods=['POST'])
-def generate_summary():
-  try:
-    payload = request.get_json(silent=True) or {}
-    if not payload:
-      return jsonify({"error": "No JSON payload provided."}), 400
-
-    # frontend may send { diagram: {...}, mode: "hybrid" }
-    diagram_json = payload.get("diagram", payload)
-    mode = payload.get("mode", "hybrid")  # "deterministic" | "hybrid"
-    model = None  # client-supplied model names are ignored; use llm.MODEL_SUMMARY
-
-    bundle = generate_summary_bundle(
-      diagram_json=diagram_json,
-      mode=mode,
-      model=model,
-    )
-
-    return jsonify({
-      "short_alt": bundle["short_alt"],
-      "summary": bundle["long_markdown"],
-      "diagram_type": bundle["diagram_type"],
-      "outline_markdown": bundle["outline_markdown"],
-    }), 200
-
-  except Exception as e:
-    print("Error in /generate-summary:", traceback.format_exc())
-    return jsonify({"error": str(e)}), 500
-
 # ----- Pilot Specific Help ----- #
 @api_bp.route("/flowcharts/<flowchart_id>/finalize-export", methods=["POST"])
 @require_auth
@@ -803,14 +699,18 @@ LONGDESC_MAX_ALT = 2_000
 LONGDESC_MAX_MARKDOWN = 50_000
 LONGDESC_MAX_TITLE = 255
 LONGDESC_MAX_IMAGE = 5_000_000   # characters of the data: URL, about 3.7 MB of image
-LONGDESC_PER_IP_PER_HOUR = 30
+LONGDESC_PER_IP_PER_HOUR = 30          # text-only saves, anyone
+LONGDESC_IMAGES_PER_USER_PER_HOUR = 20
+LONGDESC_MAX_IMAGES_PER_USER = 100     # stored images an account may keep
 
 
 @api_bp.route('/longdesc', methods=['POST'])
 def create_long_description():
     """
-    Create a permalink entry for a complex image. Open to anyone (the /ld page has no sign-in),
-    so size and rate are limited.
+    Create a permalink entry for a complex image. Text-only entries are open to anyone (the /ld
+    page works without an account), so their size and rate are limited. An entry that includes an
+    image is the expensive kind to store, so it needs a signed-in account (Authorization: Bearer
+    ...), which also gives it a real owner and a per-account limit.
     Expects JSON:
       {
         "alt_text": "...",
@@ -853,7 +753,22 @@ def create_long_description():
         if not isinstance(slug, str) or not LONGDESC_SLUG_RE.match(slug):
             return jsonify({'error': 'slug must be 3-64 letters, digits, - or _'}), 400
 
-        if not limiter.allow("ld:" + client_ip(), LONGDESC_PER_IP_PER_HOUR):
+        owner_id = ANONYMOUS_OWNER
+        if image_data_url:
+            user_id = optional_user()
+            if not user_id:
+                return jsonify({'error': 'Sign in to save a long description with an image.'}), 401
+            owner_id = user_id
+            if not limiter.allow("ld-img:" + user_id, LONGDESC_IMAGES_PER_USER_PER_HOUR):
+                return jsonify({'error': 'Too many saves. Please wait a while and try again.'}), 429
+            kept = (
+                LongDescription.query.filter_by(owner_id=user_id)
+                .filter(LongDescription.image_data_url.isnot(None))
+                .count()
+            )
+            if kept >= LONGDESC_MAX_IMAGES_PER_USER:
+                return jsonify({'error': f'You can keep up to {LONGDESC_MAX_IMAGES_PER_USER} long descriptions with images.'}), 409
+        elif not limiter.allow("ld:" + client_ip(), LONGDESC_PER_IP_PER_HOUR):
             return jsonify({'error': 'Too many saves. Please wait a while and try again.'}), 429
 
         # Ensure slug is unique
@@ -863,7 +778,7 @@ def create_long_description():
 
         record = LongDescription(
             slug=slug,
-            owner_id=ANONYMOUS_OWNER,
+            owner_id=owner_id,
             alt_text=alt_text,
             long_markdown=long_markdown,
             image_data_url=image_data_url,

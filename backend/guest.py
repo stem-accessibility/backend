@@ -7,6 +7,7 @@ the database never holds it. Guests cannot use the image pipeline or any AI rout
 publicly, and get one image. Limits here keep that open door from being used for spam.
 """
 import hashlib
+import os
 import re
 import threading
 import time
@@ -40,9 +41,34 @@ def guest_owner_id(token: str) -> str:
     return GUEST_PREFIX + hashlib.sha256(token.encode("utf-8")).hexdigest()[:48]
 
 
+def _trusted_proxy_hops() -> int:
+    """How many proxies in front of this process append to X-Forwarded-For and are trusted.
+
+    Cloud Run's front end appends the address it actually received the connection from, so on Cloud
+    Run (K_SERVICE is set) that is 1. Anywhere else there is no trusted proxy by default, and the
+    header is ignored: it is just text the caller typed. Override with TRUSTED_PROXY_HOPS when there
+    is a load balancer of your own in front (it counts every trusted hop).
+    """
+    raw = os.environ.get("TRUSTED_PROXY_HOPS")
+    if raw is not None and raw.strip().isdigit():
+        return int(raw)
+    return 1 if os.environ.get("K_SERVICE") else 0
+
+
 def client_ip() -> str:
-    fwd = request.headers.get("X-Forwarded-For", "")
-    return (fwd.split(",")[0].strip() if fwd else request.remote_addr) or "unknown"
+    """The address that connected to the platform, for rate limits.
+
+    X-Forwarded-For reads "client-supplied..., address-the-first-proxy-saw, ...". Everything to the
+    left of the trusted proxies' own entries was written by the caller, so the address to use is
+    counted from the RIGHT, not taken from the left (which a caller can set to anything, giving
+    every request a fresh rate-limit bucket).
+    """
+    hops = _trusted_proxy_hops()
+    if hops > 0:
+        parts = [p.strip() for p in request.headers.get("X-Forwarded-For", "").split(",") if p.strip()]
+        if len(parts) >= hops:
+            return parts[-hops]
+    return request.remote_addr or "unknown"
 
 
 class _Window:

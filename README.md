@@ -120,6 +120,7 @@ To mimic production: `.venv/bin/gunicorn backend.wsgi:app --bind 127.0.0.1:4999 
 | `CORS_ORIGINS` | Comma-separated extra allowed origins, e.g. the Vercel URL |
 | `RUN_JOBS_INLINE` | `1` = process each job inside the request that created it (scale-to-zero / local dev) |
 | `RUN_WORKER_IN_PROCESS` | `1` = run a polling worker thread in the web process (always-on hosts; leave `RUN_JOBS_INLINE` unset) |
+| `TRUSTED_PROXY_HOPS` | How many proxies in front of the app append to `X-Forwarded-For` and are trusted when finding the caller's address for rate limits. Default `1` on Cloud Run, `0` elsewhere (the header is ignored). |
 | `JOB_TIMEOUT_SECONDS` | Report a job stuck in `running` as failed after this long (default 900) |
 
 `.env` and `*google-key.json` are git-ignored. Never commit credentials.

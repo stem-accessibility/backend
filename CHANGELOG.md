@@ -22,6 +22,28 @@ database change lists the migration to run **before** deploying (`make migrate`)
   event types are a 400).
 - `tests/test_charts.py`.
 
+### Removed
+- `POST /upload`, `POST /generate-summary` and `POST /generate-outline`. They ran the paid image pipeline
+  (OCR, detection, LLM) and an LLM call with no sign-in and no rate limit, and nothing in the frontend called
+  them (it uses the signed-in `POST /jobs/process-upload` and `POST /jobs/generate-summary`). Anything outside
+  the app that called them directly must switch to the `/jobs/...` routes and send a Bearer token.
+
+### Security
+- Rate limits no longer trust a forged `X-Forwarded-For`. The address is now the one the platform appended
+  (counted from the right; one trusted hop on Cloud Run, none elsewhere; `TRUSTED_PROXY_HOPS` overrides).
+  Before, the leftmost entry was used, so any caller could get a fresh limit with every request. This applies
+  to the guest write limits, the report limit and the long-description limit.
+- `POST /longdesc` with an image now needs a signed-in account (text-only saves still do not), with a
+  per-account hourly limit and a cap of 100 stored images.
+
+### Fixed
+- `POST /longdesc` returned 500 for every request: `long_descriptions.owner_id` is NOT NULL and the route
+  never set it. It now stores a placeholder owner (`anonymous`; the /ld page has no sign-in). Because the
+  endpoint is open to anyone, it also validates sizes (alt text 2,000 characters, description 50,000, title
+  255, image 5 MB as a data: URL, slug 3-64 letters, digits, `-` or `_`), is limited to 30 saves per
+  address per hour, and no longer returns SQL in its error responses (here and on `GET /longdesc/<slug>`).
+  `tests/test_longdesc.py`.
+
 ## [0.3.0] — 2026-10-11
 
 Deployed to Cloud Run (us-west1) from commit 7fdad86. Migration 0004 (`reports`) was applied first.
