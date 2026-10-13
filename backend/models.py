@@ -13,6 +13,10 @@ class Flowchart(db.Model):
     
     image_data_url = db.Column(db.Text)  # "data:image/png;base64,...."
     image_mime = db.Column(db.String(64))  # e.g., "image/png"
+    # The original image lives in `stem_images` (see backend/image_store.py). `image_data_url`
+    # above is the legacy inline copy: new rows leave it empty, and `flask migrate-images` moves
+    # old rows over.
+    image_id = db.Column(db.String(36), nullable=True, index=True)
     version = db.Column(db.Integer, nullable=False, default=1)
     is_published = db.Column(db.Boolean, nullable=False, default=False)
     public_slug = db.Column(db.String(64), unique=True, nullable=True)
@@ -33,6 +37,20 @@ class Flowchart(db.Model):
 
     created_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
 
+class StemImage(db.Model):
+    """The original uploaded image for a STEM image, kept apart from the rows people list and
+    search so those stay small. Reached only through backend/image_store.py, so moving the bytes
+    to object storage later changes one class and the `data` column, not the callers."""
+    __tablename__ = "stem_images"
+    id = db.Column(db.Integer, primary_key=True)
+    image_id = db.Column(db.String(36), unique=True, nullable=False)  # UUID, opaque
+    owner_id = db.Column(db.String(64), nullable=False, index=True)
+    mime = db.Column(db.String(64), nullable=False)
+    size_bytes = db.Column(db.Integer, nullable=False)
+    data = db.Column(db.LargeBinary, nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.datetime.utcnow, nullable=False)
+
+
 class LongDescription(db.Model):
     __tablename__ = "long_descriptions"
     id = db.Column(db.Integer, primary_key=True)
@@ -43,8 +61,14 @@ class LongDescription(db.Model):
     title = db.Column(db.String(255), nullable=True) 
     alt_text = db.Column(db.Text, nullable=False)
     long_markdown = db.Column(db.Text, nullable=False)
-    image_data_url = db.Column(db.Text, nullable=True)  # 🔹 NEW
-                 # 🔹 NEW
+    # Legacy inline copy. New rows keep the image in `stem_images` and set image_id instead;
+    # `flask migrate-images` moves old rows over.
+    image_data_url = db.Column(db.Text, nullable=True)
+    image_id = db.Column(db.String(36), nullable=True, index=True)
+    # Whether visitors to the shared page can see the image. Off by default, like
+    # Flowchart.image_public; the owner always can. Rows that existed before this column keep
+    # showing their image (the migration sets them to true), so printed links do not change.
+    image_public = db.Column(db.Boolean, nullable=False, default=False, server_default=db.false())
     created_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
 
 

@@ -8,6 +8,7 @@ from werkzeug.utils import secure_filename
 from backend.db import db
 from backend.models import Job
 from backend.auth import require_auth
+from backend.jobs.retention import purge_quietly
 
 jobs_bp = Blueprint("jobs", __name__)
 
@@ -136,6 +137,68 @@ def get_job(job_id):
         "finished_at": job.finished_at.isoformat() if job.finished_at else None,
     }), 200
 
+CHART_IMAGE_TYPES = {"image/png", "image/jpeg", "image/webp"}
+
+
+def _max_chart_image_bytes():
+    """Read per request so the limit can be changed without a restart and tested."""
+    try:
+        return int(os.environ.get("MAX_CHART_IMAGE_BYTES", str(8 * 1024 * 1024)))
+    except ValueError:
+        return 8 * 1024 * 1024
+
+
+def _chart_extractor_uses_llm():
+    """True when a request with allow_llm unset would still have to call the LLM."""
+    mode = os.environ.get("CHART_EXTRACTOR") or ("unichart" if os.environ.get("UNICHART_URL") else "llm")
+    return mode == "llm"
+
+
+@jobs_bp.route("/jobs/extract-chart", methods=["POST"])
+@require_auth
+def enqueue_extract_chart_job():
+    """Read a chart image into a table. Form fields: `file`, and `allow_llm` = "true" only when the
+    person has chosen to send the image to the AI model (Gemini through OpenRouter). Without it the
+    image is never sent to a third party."""
+    file = request.files.get("file")
+    if not file or not file.filename:
+        return jsonify({"error": "No file provided"}), 400
+    if file.mimetype not in CHART_IMAGE_TYPES:
+        return jsonify({"error": "Upload a PNG, JPEG or WebP image"}), 400
+
+    limit = _max_chart_image_bytes()
+    img_bytes = file.read(limit + 1)
+    if not img_bytes:
+        return jsonify({"error": "Empty file"}), 400
+    if len(img_bytes) > limit:
+        return jsonify({"error": f"Image is larger than {max(limit // (1024 * 1024), 1)} MB"}), 413
+
+    allow_llm = (request.form.get("allow_llm") or "").lower() == "true"
+    if _chart_extractor_uses_llm() and not allow_llm:
+        return jsonify({
+            "error": "Reading this chart needs the AI model, which sends the image to a third party. "
+                     "Agree to that, or enter the data as a CSV instead.",
+            "needs_ai_consent": True,
+        }), 400
+
+    purge_quietly()  # keep old uploads out of the table even without a scheduled cleanup
+    job = Job(
+        type="extract_chart",
+        payload=json.dumps({
+            "image_b64": base64.b64encode(img_bytes).decode("utf-8"),
+            "image_mime": file.mimetype,
+            "allow_llm": allow_llm,
+        }),
+        status="queued",
+        owner_id=g.user_id,
+    )
+    db.session.add(job)
+    db.session.commit()
+    run_inline_if_enabled(job)
+
+    return jsonify({"job_id": job.id, "status": job.status}), 201
+
+
 @jobs_bp.route("/jobs/process-upload", methods=["POST"])
 @require_auth
 def enqueue_upload_job():
@@ -158,6 +221,7 @@ def enqueue_upload_job():
         "image_mime": mime_type,
     }
 
+    purge_quietly()
     job = Job(
         type="process_upload",
         payload=json.dumps(payload),

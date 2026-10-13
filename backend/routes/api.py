@@ -18,6 +18,11 @@ from flask import g
 import uuid
 # Import models after initializing db to avoid circular imports
 from backend.models import Flowchart, LongDescription
+from backend.image_store import (
+    ImageError,
+    flowchart_image_data_url,
+    set_flowchart_image,
+)
 from sqlalchemy import inspect, text
 from backend.study.study_utils import get_active_study_account, create_artifact_snapshot, get_or_create_active_study_session, touch_study_session, create_research_event
 from backend.study.event_types import EVENT_TYPES
@@ -90,7 +95,7 @@ def apply_sharing(r: Flowchart, sharing: str) -> None:
 
 
 def serialize_flowchart(r: Flowchart, include_json: bool = True, public_mode: bool = False):
-    has_image = bool(getattr(r, "image_data_url", None))
+    has_image = bool(getattr(r, "image_id", None) or getattr(r, "image_data_url", None))
     image_public = bool(getattr(r, "image_public", False))
 
     if public_mode:
@@ -215,10 +220,10 @@ def create_flowchart():
             title=data.get("title"),
             short_alt=short_alt,
             flowchart_type=data.get("flowchart_type", "unknown"),
-            image_data_url=data.get("image_data_url"),
-            image_mime=data.get("image_mime"),
             image_public=bool(data.get("image_public", False)),
         )
+        # The original goes to the image store (not the flowchart row); ImageError -> 400 below.
+        set_flowchart_image(r, data.get("image_data_url"))
         # "sharing" is preferred; the older "visibility" field maps onto it.
         sharing = data.get("sharing")
         if sharing is None:
@@ -238,7 +243,7 @@ def create_flowchart():
                 study_session_id=study_session.id,
                 flowchart_id=r.flowchart_id,
                 snapshot_type=snapshot_type,
-                image_data_url=r.image_data_url,
+                image_data_url=flowchart_image_data_url(r),
                 image_mime=r.image_mime,
                 json_data=json.loads(r.json_data) if r.json_data else None,
                 short_alt=r.short_alt,
@@ -253,6 +258,9 @@ def create_flowchart():
         
         return jsonify(serialize_flowchart(r, include_json=False)), 201
 
+    except ImageError as e:
+        db.session.rollback()
+        return error(400, str(e))
     except Exception as e:
         print("Error in POST /flowcharts:", traceback.format_exc())
         db.session.rollback()
@@ -274,9 +282,27 @@ def get_flowchart(flowchart_id):
 @require_auth
 def get_flowchart_image(flowchart_id):
     r = get_owned_flowchart_or_404(flowchart_id)
-    if not r or not r.image_data_url:
+    url = flowchart_image_data_url(r) if r else None
+    if not url:
         return error(404, "Image not found")
-    return jsonify({"image_data_url": r.image_data_url, "image_mime": r.image_mime}), 200
+    return jsonify({"image_data_url": url, "image_mime": r.image_mime}), 200
+
+
+@api_bp.route('/flowcharts/<flowchart_id>/image', methods=['DELETE'])
+@require_auth
+def delete_flowchart_image(flowchart_id):
+    """Remove only the original image; the STEM image itself stays."""
+    try:
+        r = get_owned_flowchart_or_404(flowchart_id)
+        if not r:
+            return error(404, "Flowchart not found")
+        set_flowchart_image(r, None)
+        db.session.commit()
+        return jsonify(serialize_flowchart(r, include_json=False)), 200
+    except Exception as e:
+        print("Error in DELETE /flowcharts/<flowchart_id>/image:", traceback.format_exc())
+        db.session.rollback()
+        return error(500, str(e))
 
 
 @api_bp.route('/flowcharts/<flowchart_id>', methods=['PUT'])
@@ -315,9 +341,7 @@ def update_flowchart(flowchart_id):
                 setattr(r, field, data[field])
 
         if "image_data_url" in data:
-            r.image_data_url = data["image_data_url"]
-        if "image_mime" in data:
-            r.image_mime = data["image_mime"]
+            set_flowchart_image(r, data["image_data_url"])  # None removes it; ImageError -> 400
 
         db.session.commit()
 
@@ -333,7 +357,7 @@ def update_flowchart(flowchart_id):
                 study_session_id=study_session.id,
                 flowchart_id=r.flowchart_id,
                 snapshot_type=snapshot_type,
-                image_data_url=r.image_data_url,
+                image_data_url=flowchart_image_data_url(r),
                 image_mime=r.image_mime,
                 json_data=json.loads(r.json_data) if r.json_data else None,
                 short_alt=r.short_alt,
@@ -345,6 +369,9 @@ def update_flowchart(flowchart_id):
             print("Created artifact snapshot:", snapshot.id)
         return jsonify(serialize_flowchart(r, include_json=True)), 200
 
+    except ImageError as e:
+        db.session.rollback()
+        return error(400, str(e))
     except Exception as e:
         print("Error in PUT /flowcharts/<flowchart_id>:", traceback.format_exc())
         db.session.rollback()
@@ -361,6 +388,7 @@ def delete_flowchart(flowchart_id):
         if not r:
             return error(404, "Flowchart not found")
         r.deleted_at = datetime.utcnow()
+        set_flowchart_image(r, None)  # deleting a STEM image deletes its original too
         db.session.commit()
         return jsonify({"flowchart_id": flowchart_id, "deleted": True}), 200
     except Exception as e:
@@ -467,9 +495,10 @@ def get_published_flowchart_image(public_slug):
         .filter(Flowchart.deleted_at.is_(None))
         .first()
     )
-    if not r or not r.image_data_url:
+    url = flowchart_image_data_url(r) if r else None
+    if not url:
         return error(404, "Not found")
-    return jsonify({"image_data_url": r.image_data_url, "image_mime": r.image_mime}), 200
+    return jsonify({"image_data_url": url, "image_mime": r.image_mime}), 200
 
 # -------- Repo visibility (discoverability) --------
 @api_bp.route("/research/<flowchart_id>", methods=["POST"])
@@ -547,7 +576,7 @@ def finalize_export_snapshot(flowchart_id):
             flowchart_id=r.flowchart_id,
             snapshot_type="final_verified",
             file_name=None,
-            image_data_url=r.image_data_url,
+            image_data_url=flowchart_image_data_url(r),
             image_mime=r.image_mime,
             json_data=json.loads(r.json_data) if r.json_data else None,
             short_alt=r.short_alt,
@@ -731,6 +760,9 @@ def create_long_description():
         image_data_url = data.get('image_data_url')
         title = data.get('title')
         slug = data.get('slug') or uuid.uuid4().hex[:12]  # short permalink id
+        image_public = data.get('image_public', False)  # private unless the author chooses
+        if not isinstance(image_public, bool):
+            return jsonify({'error': 'image_public must be true or false'}), 400
 
         if not alt_text or not long_markdown:
             return jsonify({'error': 'alt_text and long_markdown are required'}), 400
@@ -763,7 +795,7 @@ def create_long_description():
                 return jsonify({'error': 'Too many saves. Please wait a while and try again.'}), 429
             kept = (
                 LongDescription.query.filter_by(owner_id=user_id)
-                .filter(LongDescription.image_data_url.isnot(None))
+                .filter(db.or_(LongDescription.image_id.isnot(None), LongDescription.image_data_url.isnot(None)))
                 .count()
             )
             if kept >= LONGDESC_MAX_IMAGES_PER_USER:
@@ -781,9 +813,11 @@ def create_long_description():
             owner_id=owner_id,
             alt_text=alt_text,
             long_markdown=long_markdown,
-            image_data_url=image_data_url,
             title=title,
+            image_public=image_public,
         )
+        # The image goes to the shared image store, not onto this row. ImageError -> 400 below.
+        set_flowchart_image(record, image_data_url)
 
         db.session.add(record)
         db.session.commit()
@@ -792,10 +826,14 @@ def create_long_description():
             'id': record.slug,
             'alt_text': record.alt_text,
             'long_markdown': record.long_markdown,
-            'image_data_url': record.image_data_url,
+            'image_data_url': flowchart_image_data_url(record),
+            'image_public': bool(record.image_public),
             'title': record.title,
         }), 201
 
+    except ImageError as e:
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 400
     except Exception:
         # Log the detail; do not hand SQL or stack traces back to an anonymous caller.
         print("Error in /longdesc (POST):", traceback.format_exc())
@@ -819,15 +857,63 @@ def get_long_description(slug):
         if not record:
             return jsonify({'error': 'Long description not found'}), 404
 
+        # Visitors see the image only when the author chose to show it; the author always can.
+        has_image = bool(record.image_id or record.image_data_url)
+        viewer = optional_user()
+        is_owner = bool(viewer) and viewer == record.owner_id
+        show_image = has_image and (bool(record.image_public) or is_owner)
+
         return jsonify({
             'id': record.slug,
             'alt_text': record.alt_text,
             'long_markdown': record.long_markdown,
-            'image_data_url': record.image_data_url,
+            'image_data_url': flowchart_image_data_url(record) if show_image else None,
+            'has_image': has_image,
+            'image_public': bool(record.image_public),
             'title': record.title,
         }), 200
 
     except Exception:
         print("Error in /longdesc/<slug> (GET):", traceback.format_exc())
+        return jsonify({'error': 'Internal Server Error'}), 500
+
+
+@api_bp.route('/longdesc/<slug>/sharing', methods=['PUT'])
+@require_auth
+def set_long_description_image_sharing(slug):
+    """Owner-only. Body: {"image_public": true|false} - whether visitors to the shared page see
+    the image."""
+    try:
+        record = LongDescription.query.filter_by(slug=slug, owner_id=g.user_id).first()
+        if not record:
+            return jsonify({'error': 'Long description not found'}), 404
+        value = (request.get_json(silent=True) or {}).get('image_public')
+        if not isinstance(value, bool):
+            return jsonify({'error': 'image_public must be true or false'}), 400
+        record.image_public = value
+        db.session.commit()
+        return jsonify({'id': slug, 'image_public': record.image_public}), 200
+    except Exception:
+        print("Error in /longdesc/<slug>/sharing (PUT):", traceback.format_exc())
+        db.session.rollback()
+        return jsonify({'error': 'Internal Server Error'}), 500
+
+
+@api_bp.route('/longdesc/<slug>', methods=['DELETE'])
+@require_auth
+def delete_long_description(slug):
+    """Delete a long description and its image. Only the signed-in owner can; entries saved
+    without an account (owner "anonymous") have no owner and cannot be deleted here."""
+    try:
+        record = LongDescription.query.filter_by(slug=slug, owner_id=g.user_id).first()
+        if not record:
+            return jsonify({'error': 'Long description not found'}), 404
+        set_flowchart_image(record, None)  # removes the stored bytes
+        db.session.delete(record)
+        db.session.commit()
+        return jsonify({'id': slug, 'deleted': True}), 200
+    except Exception:
+        print("Error in /longdesc/<slug> (DELETE):", traceback.format_exc())
+        db.session.rollback()
         return jsonify({'error': 'Internal Server Error'}), 500
 
