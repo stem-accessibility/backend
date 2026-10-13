@@ -6,6 +6,22 @@ database change lists the migration to run **before** deploying (`make migrate`)
 
 ## [Unreleased]
 
+### Added
+- Chart permalinks: `POST/GET /charts`, `GET/PUT/DELETE /charts/<chart_id>`,
+  `PUT /charts/<chart_id>/sharing`, and the public `GET /c/<slug>`. A chart is its table plus a
+  whitelisted config (chart type, columns, title, axis labels, category order); the server bounds and
+  validates both (up to 5000 rows and 100 columns, 2 MB, 200 charts per account). Shared by link by
+  default; `"public"` is accepted and stored, but there is no chart listing yet, so a public chart is
+  reachable only by its link, like `"link"`. Table `charts`,
+  **migrations 0005 and 0006 (`spec_json`) — run `make migrate` before deploying**.
+- Charts can carry an optional Vega-Lite `spec`, returned with the chart and on the public link so a
+  shared chart is described the way its author described it. It is stored as-is and never executed by the
+  server, and only accepted if it is a Vega-Lite object up to 200 KB and 40 levels deep that contains no
+  `url` anywhere (so it cannot make a viewer's browser fetch anything).
+- `Create_Chart` research event type (the frontend logs it when someone chooses Chart on /create; unknown
+  event types are a 400).
+- `tests/test_charts.py`.
+
 ## [0.3.0] — 2026-10-11
 
 Deployed to Cloud Run (us-west1) from commit 7fdad86. Migration 0004 (`reports`) was applied first.

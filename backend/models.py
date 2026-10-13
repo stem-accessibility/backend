@@ -157,3 +157,32 @@ class Report(db.Model):
     public_slug = db.Column(db.String(64), nullable=False, index=True)
     reason = db.Column(db.String(500), nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
+
+
+class Chart(db.Model):
+    """A chart made on the Charts page: the uploaded table plus how it was mapped and labelled.
+
+    The page rebuilds the table, navigable outline and sonification from these two JSON blobs, so
+    nothing derived is stored. Sharing uses the same two flags as Flowchart (`is_published` and
+    `visibility`) so apply_sharing / current_sharing work unchanged. There is no chart listing yet,
+    so `visibility = "public"` is recorded but has no effect beyond what a link already does.
+    """
+    __tablename__ = "charts"
+    id = db.Column(db.Integer, primary_key=True)
+    chart_id = db.Column(db.String(36), unique=True, nullable=False)  # UUID
+    owner_id = db.Column(db.String(64), nullable=False, index=True)
+    title = db.Column(db.String(255), nullable=True)
+    dataset_json = db.Column(db.Text, nullable=False)  # {"columns": [...], "rows": [...], "name": ...}
+    config_json = db.Column(db.Text, nullable=False)   # whitelisted chart settings
+    spec_json = db.Column(db.Text, nullable=True)      # optional Vega-Lite spec (see clean_spec)
+
+    is_published = db.Column(db.Boolean, nullable=False, default=False, server_default=db.false())
+    visibility = db.Column(db.String(16), nullable=False, default="private", server_default="private")
+    public_slug = db.Column(db.String(64), unique=True, nullable=True)
+    published_at = db.Column(db.DateTime, nullable=True)
+
+    deleted_at = db.Column(db.DateTime, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.datetime.utcnow, nullable=False)
+    updated_at = db.Column(
+        db.DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow, nullable=False
+    )

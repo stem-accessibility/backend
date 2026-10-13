@@ -28,6 +28,7 @@ EVENT_TYPES = {
     "Create_Mermaid": CREATION,
     "Create_Scratch": CREATION,
     "Create_Image": CREATION,
+    "Create_Chart": CREATION,
     "Upload_Image": CREATION,
     "Upload_Mermaid": CREATION,
     "Switch_Editor_Mode": CREATION,

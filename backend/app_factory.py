@@ -4,6 +4,7 @@ from dotenv import load_dotenv
 import os
 import click
 from backend.routes.api import api_bp
+from backend.routes.charts import charts_bp
 from backend.routes.jobs import jobs_bp
 from backend.routes.guest import guest_bp
 from backend.db import db, migrate
@@ -52,6 +53,7 @@ def create_app():
 
     app.register_blueprint(jobs_bp)
     app.register_blueprint(api_bp)
+    app.register_blueprint(charts_bp)
     app.register_blueprint(guest_bp)
 
     # Schema changes go through Alembic (`flask db upgrade`, see README). create_all()
