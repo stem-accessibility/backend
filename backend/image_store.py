@@ -115,7 +115,7 @@ def set_flowchart_image(r, image_data_url):
 
 
 def migrate_legacy_images(dry_run=False, batch=50):
-    """Move inline `Flowchart.image_data_url` values into the store. Idempotent: rows that already
+    """Move inline image_data_url values on Flowchart and LongDescription rows into the store. Idempotent: rows that already
     have an image_id are skipped, and a row whose data cannot be parsed is left as it is and
     counted. Returns {"moved": n, "skipped_unreadable": n}."""
     counts = {"moved": 0, "skipped_unreadable": 0}
