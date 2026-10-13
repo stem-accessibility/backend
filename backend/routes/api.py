@@ -17,7 +17,7 @@ from backend.pipeline.pipeline2 import process_image
 from dotenv import load_dotenv
 from backend.mermaid_parser import parse_mermaid_flowchart_td
 from backend.auth import require_auth
-from backend.guest import is_guest_owner
+from backend.guest import client_ip, is_guest_owner, limiter
 from flask import g
 import tempfile
 from backend.descriptions.deterministic_longdesc import build_deterministic_outline
@@ -795,29 +795,66 @@ def encode_image(image_path):
 
 
 
+# Long descriptions are made on the public /ld page, which has no sign-in, so they are stored with a
+# fixed placeholder owner. (owner_id is NOT NULL; the old code never set it, so every save was a 500.)
+ANONYMOUS_OWNER = "anonymous"
+LONGDESC_SLUG_RE = re.compile(r"^[A-Za-z0-9_-]{3,64}$")
+LONGDESC_MAX_ALT = 2_000
+LONGDESC_MAX_MARKDOWN = 50_000
+LONGDESC_MAX_TITLE = 255
+LONGDESC_MAX_IMAGE = 5_000_000   # characters of the data: URL, about 3.7 MB of image
+LONGDESC_PER_IP_PER_HOUR = 30
+
+
 @api_bp.route('/longdesc', methods=['POST'])
 def create_long_description():
     """
-    Create a permalink entry for a complex image.
+    Create a permalink entry for a complex image. Open to anyone (the /ld page has no sign-in),
+    so size and rate are limited.
     Expects JSON:
       {
         "alt_text": "...",
         "long_markdown": "...",
+        "title": "..." (optional),
         "image_data_url": "data:image/png;base64,...." (optional),
-        "slug": "optional-custom-id"
+        "slug": "optional-custom-id"  (3-64 letters, digits, - or _)
       }
-    Returns: { "id": "<slug>" }
+    Returns: { "id": "<slug>", ... }
     """
     try:
-        data = request.json or {}
+        data = request.get_json(silent=True) or {}
+        if not isinstance(data, dict):
+            return jsonify({'error': 'Expected a JSON object'}), 400
+
         alt_text = data.get('alt_text')
         long_markdown = data.get('long_markdown')
-        image_data_url = data.get('image_data_url')  # 🔹 NEW
+        image_data_url = data.get('image_data_url')
         title = data.get('title')
         slug = data.get('slug') or uuid.uuid4().hex[:12]  # short permalink id
 
         if not alt_text or not long_markdown:
             return jsonify({'error': 'alt_text and long_markdown are required'}), 400
+
+        for name, value, limit in (
+            ('alt_text', alt_text, LONGDESC_MAX_ALT),
+            ('long_markdown', long_markdown, LONGDESC_MAX_MARKDOWN),
+        ):
+            if not isinstance(value, str):
+                return jsonify({'error': f'{name} must be text'}), 400
+            if len(value) > limit:
+                return jsonify({'error': f'{name} can be at most {limit} characters'}), 400
+        if title is not None and (not isinstance(title, str) or len(title) > LONGDESC_MAX_TITLE):
+            return jsonify({'error': f'title must be text of at most {LONGDESC_MAX_TITLE} characters'}), 400
+        if image_data_url is not None:
+            if not isinstance(image_data_url, str) or not image_data_url.startswith('data:image/'):
+                return jsonify({'error': 'image_data_url must be an image data: URL'}), 400
+            if len(image_data_url) > LONGDESC_MAX_IMAGE:
+                return jsonify({'error': 'The image is too large'}), 400
+        if not isinstance(slug, str) or not LONGDESC_SLUG_RE.match(slug):
+            return jsonify({'error': 'slug must be 3-64 letters, digits, - or _'}), 400
+
+        if not limiter.allow("ld:" + client_ip(), LONGDESC_PER_IP_PER_HOUR):
+            return jsonify({'error': 'Too many saves. Please wait a while and try again.'}), 429
 
         # Ensure slug is unique
         existing = LongDescription.query.filter_by(slug=slug).first()
@@ -826,6 +863,7 @@ def create_long_description():
 
         record = LongDescription(
             slug=slug,
+            owner_id=ANONYMOUS_OWNER,
             alt_text=alt_text,
             long_markdown=long_markdown,
             image_data_url=image_data_url,
@@ -843,10 +881,11 @@ def create_long_description():
             'title': record.title,
         }), 201
 
-    except Exception as e:
+    except Exception:
+        # Log the detail; do not hand SQL or stack traces back to an anonymous caller.
         print("Error in /longdesc (POST):", traceback.format_exc())
         db.session.rollback()
-        return jsonify({'error': f'Internal Server Error: {str(e)}'}), 500
+        return jsonify({'error': 'Internal Server Error'}), 500
 
 @api_bp.route('/longdesc/<slug>', methods=['GET'])
 def get_long_description(slug):
@@ -873,7 +912,7 @@ def get_long_description(slug):
             'title': record.title,
         }), 200
 
-    except Exception as e:
+    except Exception:
         print("Error in /longdesc/<slug> (GET):", traceback.format_exc())
-        return jsonify({'error': f'Internal Server Error: {str(e)}'}), 500
+        return jsonify({'error': 'Internal Server Error'}), 500
 
