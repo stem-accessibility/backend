@@ -82,7 +82,7 @@ def create_app():
     @app.cli.command("migrate-images")
     @click.option("--dry-run", is_flag=True, help="Count what would move without changing anything.")
     def migrate_images_cmd(dry_run):
-        """Move originals stored inline on `flowchart` rows into the `stem_images` table."""
+        """Move originals stored inline on flowchart and long_descriptions rows into stem_images."""
         from backend.image_store import migrate_legacy_images
 
         counts = migrate_legacy_images(dry_run=dry_run)
