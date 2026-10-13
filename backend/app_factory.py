@@ -79,4 +79,26 @@ def create_app():
         db.session.commit()
         click.echo(f"Took down {slug} (owner {r.owner_id})")
 
+    @app.cli.command("migrate-images")
+    @click.option("--dry-run", is_flag=True, help="Count what would move without changing anything.")
+    def migrate_images_cmd(dry_run):
+        """Move originals stored inline on flowchart and long_descriptions rows into stem_images."""
+        from backend.image_store import migrate_legacy_images
+
+        counts = migrate_legacy_images(dry_run=dry_run)
+        verb = "would move" if dry_run else "moved"
+        click.echo(f"{verb} {counts['moved']} images; {counts['skipped_unreadable']} could not be read and were left in place")
+
+    @app.cli.command("purge-job-images")
+    @click.option("--older-than-hours", type=float, default=None,
+                  help="Age after which stored images are removed (default JOB_IMAGE_TTL_HOURS, 1).")
+    @click.option("--dry-run", is_flag=True, help="Count what would change without changing it.")
+    def purge_job_images_cmd(older_than_hours, dry_run):
+        """Remove uploaded images still stored in the jobs table (inputs and embedded copies)."""
+        from backend.jobs.retention import purge_job_images
+
+        counts = purge_job_images(older_than_hours=older_than_hours, dry_run=dry_run, limit=None)
+        verb = "would clear" if dry_run else "cleared"
+        click.echo(f"{verb} {counts['payloads']} stored uploads and {counts['results']} embedded images")
+
     return app

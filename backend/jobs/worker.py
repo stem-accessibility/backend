@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from backend.app_factory import create_app
 from backend.db import db
 from backend.models import Job
+from backend.jobs.retention import empty_payload
 from backend.descriptions.summary_service import generate_summary_bundle
 import base64
 #from backend.pipeline.pipeline import process_image
@@ -47,6 +48,7 @@ def complete_job(job: Job, result_dict: dict):
     job.result = json.dumps(result_dict)
     job.status = "done"
     job.finished_at = utc_now_naive()
+    empty_payload(job)  # the uploaded image is no longer needed
     db.session.commit()
 
 
@@ -54,6 +56,7 @@ def fail_job(job: Job, error_message: str):
     job.status = "failed"
     job.error = error_message
     job.finished_at = utc_now_naive()
+    empty_payload(job)
     db.session.commit()
 
 
@@ -121,8 +124,73 @@ def process_upload_job(job: Job, payload: dict):
         except Exception:
             pass
 
+def process_extract_chart_job(job: Job, payload: dict):
+    """Chart image -> table, settings and (for bar, line, pie) a Vega-Lite spec.
+
+    The image is never returned and the job's payload (which holds it) is emptied afterwards, so a
+    chart image is not kept in the jobs table once it has been read.
+    """
+    from backend.chart_validation import ChartValidationError, clean_config, clean_dataset, clean_spec
+    from backend.pipeline.chart_extract import ConsentRequired, ExtractionError, extract_chart
+    from backend.pipeline.chart_spec import build_config, build_spec
+
+    suffix = {"image/jpeg": ".jpg", "image/webp": ".webp"}.get(payload.get("image_mime"), ".png")
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+        tmp.write(base64.b64decode(payload["image_b64"]))
+        tmp_path = tmp.name
+
+    try:
+        try:
+            x = extract_chart(tmp_path, allow_llm=bool(payload.get("allow_llm")))
+        except ConsentRequired as e:
+            fail_job(job, str(e))
+            return
+        except ExtractionError as e:
+            fail_job(job, str(e))
+            return
+
+        warnings = list(x.warnings)
+        rows = [{c: (r[i] if i < len(r) else None) for i, c in enumerate(x.columns)} for r in x.rows]
+        try:
+            dataset = clean_dataset({"columns": x.columns, "rows": rows})
+        except ChartValidationError as e:
+            fail_job(job, f"The chart could not be read as a table: {e}")
+            return
+
+        config = clean_config(build_config(x.columns, x.chart_type, x.title, x.x_label, x.y_label),
+                              dataset["columns"])
+        spec = None
+        try:
+            spec = clean_spec(build_spec(dataset, config))
+        except ChartValidationError as e:
+            warnings.append(f"A chart specification could not be built: {e}")
+        if x.chart_type is None:
+            warnings.append("The chart type could not be worked out; choose it before using the chart.")
+
+        complete_job(job, {
+            "dataset": dataset,
+            "config": config,
+            "spec": spec,
+            "extractor": x.extractor,                  # "unichart" or "llm"
+            "sent_to_ai_model": x.extractor == "llm",  # lets the page say where the image went
+            "values_are_estimated": x.values_are_estimated,
+            "warnings": warnings,
+        })
+    finally:
+        job.payload = "{}"
+        db.session.commit()
+        try:
+            os.remove(tmp_path)
+        except Exception:
+            pass
+
+
 def process_job(job: Job):
     payload = json.loads(job.payload or "{}")
+
+    if job.type == "extract_chart":
+        process_extract_chart_job(job, payload)
+        return
 
     if job.type == "test":
         process_test_job(job, payload)

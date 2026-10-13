@@ -1,0 +1,176 @@
+"""Chart image extraction: parsing, routing between the local reader and the AI model, consent,
+spec templating and the upload route. No model, network or real image is used; both extractors are
+replaced with fixed results.
+    .venv/bin/python -m unittest tests.test_chart_extract -v
+"""
+import io
+import json
+import os
+import tempfile
+import unittest
+from unittest import mock
+
+_tmp = tempfile.mkdtemp()
+os.environ["AUTH_MODE"] = "dev"
+os.environ["AUTO_CREATE_TABLES"] = "1"
+os.environ["DATABASE_URL"] = f"sqlite:///{_tmp}/test.sqlite"
+os.environ.pop("K_SERVICE", None)
+
+from backend.app_factory import create_app  # noqa: E402
+from backend.chart_validation import clean_spec  # noqa: E402
+from backend.db import db  # noqa: E402
+from backend.models import Job  # noqa: E402
+from backend.pipeline import chart_extract as ce  # noqa: E402
+from backend.pipeline.chart_spec import build_config, build_spec  # noqa: E402
+
+PNG = b"\x89PNG\r\n\x1a\n" + b"0" * 32
+
+
+def single_series(extractor="unichart"):
+    return ce.ChartExtraction(
+        columns=["Region", "Units"], rows=[["North", 21.0], ["South", 8.0], ["East", 11.0]],
+        extractor=extractor, chart_type="bar", values_are_estimated=False,
+    )
+
+
+def multi_series(extractor="unichart"):
+    return ce.ChartExtraction(
+        columns=["Region", "2023", "2024"], rows=[["North", 15.0, 54.0], ["South", 19.0, 73.0]],
+        extractor=extractor, chart_type="bar",
+    )
+
+
+class ParsingTests(unittest.TestCase):
+    def test_parse_number(self):
+        self.assertEqual(ce.parse_number("1,200"), 1200.0)
+        self.assertEqual(ce.parse_number("45%"), 45.0)
+        self.assertEqual(ce.parse_number(3), 3.0)
+        self.assertIsNone(ce.parse_number("n/a"))
+        self.assertIsNone(ce.parse_number(True))
+
+    def test_unichart_table_text(self):
+        header, body = ce.parse_unichart_table("Characteristic | Value & Haiti | 6.12% & Libya | 5.32%")
+        self.assertEqual(header, ["Characteristic", "Value"])
+        self.assertEqual(body, [["Haiti", "6.12%"], ["Libya", "5.32%"]])
+
+    def test_empty_unichart_output_is_an_error(self):
+        with self.assertRaises(ce.ExtractionError):
+            ce.parse_unichart_table("Characteristic | Value")
+
+    def test_normalise_makes_unique_names_and_numbers(self):
+        cols, rows = ce._normalise(["Year", "Year", ""], [["2004.0", "1,5", "x"], ["2005", 2, None]])
+        self.assertEqual(cols, ["Year", "Year 2", "Column 3"])
+        self.assertEqual(rows[0], ["2004.0", 15.0, "x"])
+        self.assertEqual(rows[1], ["2005", 2.0, None])
+
+    def test_chart_type_suggestion(self):
+        self.assertEqual(ce.suggest_chart_type(["y", "v"], [["2004", 1], ["2005", 2]]), "line")
+        self.assertEqual(ce.suggest_chart_type(["m", "v"], [["Jan", 1], ["Feb", 2]]), "line")
+        self.assertEqual(ce.suggest_chart_type(["c", "v"], [["Haiti", 1], ["Libya", 2]]), "bar")
+        self.assertIsNone(ce.suggest_chart_type(["c", "v"], []))
+
+
+class RoutingTests(unittest.TestCase):
+    def test_llm_mode_needs_consent(self):
+        with mock.patch.object(ce, "extract_with_llm") as llm:
+            with self.assertRaises(ce.ConsentRequired):
+                ce.extract_chart("x.png", allow_llm=False, mode="llm")
+            llm.assert_not_called()
+
+    def test_complete_local_result_never_calls_the_llm(self):
+        with mock.patch.object(ce, "extract_with_unichart", return_value=single_series()), \
+             mock.patch.object(ce, "extract_with_llm") as llm:
+            out = ce.extract_chart("x.png", allow_llm=True, mode="unichart")
+        self.assertEqual(out.extractor, "unichart")
+        llm.assert_not_called()
+
+    def test_incomplete_result_escalates_only_with_consent(self):
+        with mock.patch.object(ce, "extract_with_unichart", return_value=multi_series()), \
+             mock.patch.object(ce, "extract_with_llm", return_value=multi_series("llm")) as llm:
+            declined = ce.extract_chart("x.png", allow_llm=False, mode="unichart")
+            llm.assert_not_called()
+            self.assertEqual(declined.extractor, "unichart")
+            self.assertTrue(any("may be incomplete" in w for w in declined.warnings))
+
+            agreed = ce.extract_chart("x.png", allow_llm=True, mode="unichart")
+            llm.assert_called_once()
+            self.assertEqual(agreed.extractor, "llm")
+
+    def test_llm_failure_after_consent_falls_back_with_a_warning(self):
+        with mock.patch.object(ce, "extract_with_unichart", return_value=multi_series()), \
+             mock.patch.object(ce, "extract_with_llm", side_effect=ce.ExtractionError("boom")):
+            out = ce.extract_chart("x.png", allow_llm=True, mode="unichart")
+        self.assertEqual(out.extractor, "unichart")
+        self.assertTrue(out.warnings)
+
+
+class SpecTests(unittest.TestCase):
+    def dataset(self):
+        return {"columns": ["Region", "Units"], "rows": [{"Region": "N", "Units": 1}, {"Region": "S", "Units": 2}]}
+
+    def test_templated_specs_pass_the_validator(self):
+        for preset in ("bar", "line", "pie"):
+            with self.subTest(preset=preset):
+                cfg = build_config(["Region", "Units"], preset, title="T")
+                spec = build_spec(self.dataset(), cfg)
+                self.assertIsNotNone(clean_spec(spec))
+                self.assertNotIn("url", json.dumps(spec))
+
+    def test_no_template_means_no_spec(self):
+        cfg = build_config(["Region", "Units"], "scatter")
+        self.assertIsNone(build_spec(self.dataset(), cfg))
+
+    def test_unknown_preset_is_dropped_from_config(self):
+        self.assertIsNone(build_config(["a", "b"], "treemap")["preset"])
+
+
+class RouteTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.app = create_app()
+        cls.client = cls.app.test_client()
+
+    def post(self, data=None, content_type="image/png", body=PNG, **env):
+        data = dict(data or {})
+        data["file"] = (io.BytesIO(body), "chart.png", content_type)
+        with mock.patch.dict(os.environ, {"RUN_JOBS_INLINE": "1", **env}):
+            return self.client.post("/jobs/extract-chart", data=data, content_type="multipart/form-data")
+
+    def test_rejects_non_images(self):
+        r = self.post(content_type="application/pdf")
+        self.assertEqual(r.status_code, 400)
+
+    def test_rejects_oversize_images(self):
+        with self.app.app_context():
+            before = Job.query.filter_by(type="extract_chart").count()
+        r = self.post(MAX_CHART_IMAGE_BYTES="10", CHART_EXTRACTOR="unichart")
+        self.assertEqual(r.status_code, 413)
+        with self.app.app_context():
+            self.assertEqual(Job.query.filter_by(type="extract_chart").count(), before)
+
+    def test_llm_only_setup_refuses_without_consent(self):
+        r = self.post(CHART_EXTRACTOR="llm")
+        self.assertEqual(r.status_code, 400)
+        self.assertTrue(r.get_json()["needs_ai_consent"])
+        with self.app.app_context():
+            self.assertEqual(Job.query.filter_by(type="extract_chart").count(), 0)
+
+    def test_local_extraction_end_to_end_and_image_is_not_kept(self):
+        with mock.patch.object(ce, "extract_with_unichart", return_value=single_series()):
+            r = self.post(CHART_EXTRACTOR="unichart")
+            self.assertEqual(r.status_code, 201)
+            job_id = r.get_json()["job_id"]
+        with self.app.app_context():
+            job = db.session.get(Job, job_id)
+            self.assertEqual(job.status, "done")
+            result = json.loads(job.result)
+            self.assertEqual(result["extractor"], "unichart")
+            self.assertFalse(result["sent_to_ai_model"])
+            self.assertEqual(result["dataset"]["columns"], ["Region", "Units"])
+            self.assertEqual(result["config"]["preset"], "bar")
+            self.assertIsNotNone(result["spec"])
+            self.assertEqual(job.payload, "{}")  # the uploaded image is gone
+
+
+if __name__ == "__main__":
+    unittest.main()
