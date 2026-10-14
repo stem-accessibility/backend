@@ -162,12 +162,15 @@ make migration-status                # current revision + drift check
 ## Deploy to Cloud Run (us-west1, scale to zero)
 
 Run `make migrate` against the production `DATABASE_URL` first. One-time setup: enable Secret Manager, put `DATABASE_URL` and
-`ACCESSFLOW_OPENROUTER_API_KEY` in it, and let the service account read them.
+`ACCESSFLOW_OPENROUTER_API_KEY` in it, and let the service account read them
+(Secret Manager Secret Accessor on each secret).
+
+The current deployment is project `accessflow-496218`.
 
 ```bash
 gcloud run deploy accessflow-backend \
-  --project stem-accessibility --region us-west1 --source . \
-  --service-account accessflow-backend@stem-accessibility.iam.gserviceaccount.com \
+  --project accessflow-496218 --region us-west1 --source . \
+  --service-account accessflow-backend@accessflow-496218.iam.gserviceaccount.com \
   --memory 4Gi --cpu 2 --timeout 600 --concurrency 4 \
   --min-instances 0 --max-instances 3 --allow-unauthenticated \
   --set-env-vars SUPABASE_URL=...,SUPABASE_JWT_ISSUER=...,CORS_ORIGINS=https://<frontend>.vercel.app \
@@ -176,13 +179,46 @@ gcloud run deploy accessflow-backend \
 
 The container sets `RUN_JOBS_INLINE=1` by default. Cold starts load torch and
 take tens of seconds. Then set `VITE_API_URL` to the service URL in the
-frontend's Vercel project and redeploy it.
+frontend's Vercel project and redeploy it (Vite reads it at build time, so an
+existing build keeps calling the old URL).
+
+### After deploying
+
+- **Check that the secrets are attached.** Without `DATABASE_URL` the app
+  silently falls back to an empty SQLite file and every data route returns 500
+  (`no such table`). List the variable names (this does not print values):
+
+  ```bash
+  gcloud run services describe accessflow-backend --region us-west1 --project accessflow-496218 \
+    --format="yaml(spec.template.spec.containers[0].env)" | grep -E "name:"
+  ```
+
+  `DATABASE_URL` and `ACCESSFLOW_OPENROUTER_API_KEY` should be there. Attach a
+  missing one with `gcloud run services update ... --update-secrets NAME=NAME:latest`.
+- **Check CORS from each origin the frontend uses:**
+
+  ```bash
+  curl -si "$SERVICE_URL/" -H "Origin: https://stem-access.org" | grep -i access-control
+  ```
+
+  No `access-control-allow-origin` line means that origin is not allowed.
+- **Changing an env var does not change the code.** `gcloud run services update`
+  reuses the running image. A new setting that the code only learned to read
+  recently (such as `CORS_ORIGIN_PATTERNS`) has no effect until you redeploy
+  with `--source .`.
+- `CORS_ORIGINS` and `CORS_ORIGIN_PATTERNS` contain commas, so set them with a
+  custom delimiter: `--update-env-vars "^@^CORS_ORIGINS=https://a,https://b@CORS_ORIGIN_PATTERNS=https://frontend-git-*-stem-accessibility.vercel.app"`.
+- Keep `.env` out of the build context (`.gcloudignore` / `.dockerignore`);
+  `--source .` uploads everything not ignored.
 
 ## Known gaps
 
 - Anyone with an account can run uploads, which spend the deployment's Vision and
   OpenRouter credits. There is no per-user quota yet.
-- No automated tests beyond `testing.py`.
+- Test coverage is partial: run `.venv/bin/python -m unittest discover -s tests`
+  (chart extraction, CORS patterns, image store and others); there is no CI yet.
+- The UniChart service (`backend/services/unichart/`) is not deployed. Without
+  `UNICHART_URL`, `POST /guest/extract-chart` returns 503.
 
 ## License
 

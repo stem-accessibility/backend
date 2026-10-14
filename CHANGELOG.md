@@ -7,6 +7,33 @@ database change lists the migration to run **before** deploying (`make migrate`)
 ## [Unreleased]
 
 ### Added
+- Chart image upload: a picture of a chart becomes an editable data table, a suggested chart type
+  and a Vega-Lite spec.
+  - `POST /jobs/extract-chart` (signed in) and `POST /guest/extract-chart` (no account);
+    `GET /chart-extraction/options` reports which readers this deployment has, so the page offers
+    only real choices.
+  - The built-in reader is UniChart, a separate service (`services/unichart/`, set `UNICHART_URL`,
+    optional `UNICHART_TOKEN`, optional `CHART_EXTRACTOR=unichart|llm`). No third party sees the
+    image. When its result looks incomplete (several series, a pie, nothing numeric) and the person
+    has agreed for that upload, the AI model (OpenRouter) is used instead; without agreement the
+    built-in result comes back with a warning. A request for the AI model without agreement is
+    refused. The guest route never calls the AI model.
+  - Results are validated like any other chart table and marked as estimated unless the chart
+    printed its values.
+  - Not deployed yet: without `UNICHART_URL`, `POST /guest/extract-chart` answers 503 and
+    `/chart-extraction/options` reports `local: false`.
+- Image store: uploaded originals live in one table (`stem_images`) and are referenced by id from
+  flowcharts and long descriptions, with `image_public` still deciding who may see them. Legacy
+  inline `image_data_url` columns are kept for now. **Migrations `ee8798c827c8` and `b7d2e4f19a60` —
+  run `make migrate` before deploying.**
+- Job image retention: the source image of an upload job is deleted after the job finishes, or kept
+  only when the person asked. `flask purge-job-images` removes expired ones and
+  `flask migrate-images [--dry-run]` moves legacy inline images into `stem_images`.
+- `CORS_ORIGIN_PATTERNS`: https origin patterns where `*` matches `a-z`, `0-9` and `-` only
+  (for example `https://frontend-git-*-stem-accessibility.vercel.app` for Vercel preview
+  branches). A pattern needs a literal domain after the last `*`; others are ignored.
+  `tests/test_cors_patterns.py`.
+- `tests/test_chart_extract.py`.
 - Chart permalinks: `POST/GET /charts`, `GET/PUT/DELETE /charts/<chart_id>`,
   `PUT /charts/<chart_id>/sharing`, and the public `GET /c/<slug>`. A chart is its table plus a
   whitelisted config (chart type, columns, title, axis labels, category order); the server bounds and
@@ -29,6 +56,8 @@ database change lists the migration to run **before** deploying (`make migrate`)
   the app that called them directly must switch to the `/jobs/...` routes and send a Bearer token.
 
 ### Security
+- Images sent to the AI model for chart extraction need the person's agreement for that upload; the
+  server refuses without it, and guests (no account) can never reach the AI model.
 - Rate limits no longer trust a forged `X-Forwarded-For`. The address is now the one the platform appended
   (counted from the right; one trusted hop on Cloud Run, none elsewhere; `TRUSTED_PROXY_HOPS` overrides).
   Before, the leftmost entry was used, so any caller could get a fresh limit with every request. This applies
