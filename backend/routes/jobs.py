@@ -154,6 +154,20 @@ def _chart_extractor_uses_llm():
     return mode == "llm"
 
 
+@jobs_bp.route("/chart-extraction/options", methods=["GET"])
+def chart_extraction_options():
+    """What reading a chart image can do on this deployment (public; reveals no configuration
+    values). The page uses it to show only the choices that exist."""
+    from backend.pipeline.chart_extract import extraction_options
+
+    o = extraction_options()
+    return jsonify({
+        "local": o["local"],   # built-in reader: the image is not sent to a third party
+        "llm": o["llm"],       # AI model (Gemini via OpenRouter): needs the person's agreement
+        "mode": os.environ.get("CHART_EXTRACTOR") or ("unichart" if o["local"] else "llm"),
+    }), 200
+
+
 @jobs_bp.route("/jobs/extract-chart", methods=["POST"])
 @require_auth
 def enqueue_extract_chart_job():

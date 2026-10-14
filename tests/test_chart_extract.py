@@ -172,5 +172,58 @@ class RouteTests(unittest.TestCase):
             self.assertEqual(job.payload, "{}")  # the uploaded image is gone
 
 
+TOKEN = "g" * 40
+
+
+class OptionsAndGuestTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.app = create_app()
+        cls.client = cls.app.test_client()
+
+    def guest_post(self, env=None, content_type="image/png", token=TOKEN):
+        data = {"file": (io.BytesIO(PNG), "chart.png", content_type)}
+        headers = {"X-Guest-Token": token} if token else {}
+        with mock.patch.dict(os.environ, env or {}):
+            return self.client.post("/guest/extract-chart", data=data, headers=headers,
+                                    content_type="multipart/form-data")
+
+    def test_options_report_what_is_configured(self):
+        with mock.patch.dict(os.environ, {"UNICHART_URL": "http://reader", "ACCESSFLOW_OPENROUTER_API_KEY": "k"}):
+            o = self.client.get("/chart-extraction/options").get_json()
+        self.assertTrue(o["local"] and o["llm"])
+        self.assertEqual(o["mode"], "unichart")
+        env = {k: v for k, v in os.environ.items() if k not in ("UNICHART_URL", "ACCESSFLOW_OPENROUTER_API_KEY", "CHART_EXTRACTOR")}
+        with mock.patch.dict(os.environ, env, clear=True):
+            o = self.client.get("/chart-extraction/options").get_json()
+        self.assertFalse(o["local"] or o["llm"])
+
+    def test_options_do_not_leak_values(self):
+        with mock.patch.dict(os.environ, {"UNICHART_URL": "http://secret-host", "ACCESSFLOW_OPENROUTER_API_KEY": "sk-secret"}):
+            body = self.client.get("/chart-extraction/options").get_data(as_text=True)
+        self.assertNotIn("secret", body)
+
+    def test_guest_needs_the_built_in_reader(self):
+        env = {k: v for k, v in os.environ.items() if k != "UNICHART_URL"}
+        with mock.patch.dict(os.environ, env, clear=True):
+            r = self.guest_post()
+        self.assertEqual(r.status_code, 503)
+
+    def test_guest_gets_a_table_and_the_llm_is_never_called(self):
+        with mock.patch.object(ce, "extract_with_unichart", return_value=multi_series()), \
+             mock.patch.object(ce, "extract_with_llm") as llm:
+            r = self.guest_post({"UNICHART_URL": "http://reader", "ACCESSFLOW_OPENROUTER_API_KEY": "k"})
+        self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
+        body = r.get_json()
+        self.assertEqual(body["extractor"], "unichart")
+        self.assertFalse(body["sent_to_ai_model"])
+        self.assertTrue(any("may be incomplete" in w for w in body["warnings"]))
+        llm.assert_not_called()
+
+    def test_guest_requires_a_token_and_an_image(self):
+        self.assertEqual(self.guest_post({"UNICHART_URL": "http://reader"}, token="").status_code, 400)
+        self.assertEqual(self.guest_post({"UNICHART_URL": "http://reader"}, content_type="application/pdf").status_code, 400)
+
+
 if __name__ == "__main__":
     unittest.main()

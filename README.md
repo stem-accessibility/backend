@@ -118,6 +118,7 @@ To mimic production: `.venv/bin/gunicorn backend.wsgi:app --bind 127.0.0.1:4999 
 | `LLM_MODEL_EDGES`, `LLM_MODEL_SUMMARY` | OpenRouter model slugs, default `google/gemini-3.1-flash-lite` |
 | `GOOGLE_CREDENTIALS` | Optional service-account JSON (one line) for hosts without ADC |
 | `CORS_ORIGINS` | Comma-separated extra allowed origins, e.g. the Vercel URL |
+| `CORS_ORIGIN_PATTERNS` | Comma-separated https origin patterns where `*` matches `a-z`, `0-9` and `-` only, e.g. `https://frontend-git-*-stem-accessibility.vercel.app` for Vercel preview branches. A pattern needs a literal domain after the last `*`; others are ignored. |
 | `RUN_JOBS_INLINE` | `1` = process each job inside the request that created it (scale-to-zero / local dev) |
 | `RUN_WORKER_IN_PROCESS` | `1` = run a polling worker thread in the web process (always-on hosts; leave `RUN_JOBS_INLINE` unset) |
 | `TRUSTED_PROXY_HOPS` | How many proxies in front of the app append to `X-Forwarded-For` and are trusted when finding the caller's address for rate limits. Default `1` on Cloud Run, `0` elsewhere (the header is ignored). |

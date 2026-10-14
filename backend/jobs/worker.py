@@ -130,9 +130,9 @@ def process_extract_chart_job(job: Job, payload: dict):
     The image is never returned and the job's payload (which holds it) is emptied afterwards, so a
     chart image is not kept in the jobs table once it has been read.
     """
-    from backend.chart_validation import ChartValidationError, clean_config, clean_dataset, clean_spec
+    from backend.chart_validation import ChartValidationError
     from backend.pipeline.chart_extract import ConsentRequired, ExtractionError, extract_chart
-    from backend.pipeline.chart_spec import build_config, build_spec
+    from backend.pipeline.chart_result import build_chart_result
 
     suffix = {"image/jpeg": ".jpg", "image/webp": ".webp"}.get(payload.get("image_mime"), ".png")
     with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
@@ -149,33 +149,12 @@ def process_extract_chart_job(job: Job, payload: dict):
             fail_job(job, str(e))
             return
 
-        warnings = list(x.warnings)
-        rows = [{c: (r[i] if i < len(r) else None) for i, c in enumerate(x.columns)} for r in x.rows]
         try:
-            dataset = clean_dataset({"columns": x.columns, "rows": rows})
+            result = build_chart_result(x)
         except ChartValidationError as e:
             fail_job(job, f"The chart could not be read as a table: {e}")
             return
-
-        config = clean_config(build_config(x.columns, x.chart_type, x.title, x.x_label, x.y_label),
-                              dataset["columns"])
-        spec = None
-        try:
-            spec = clean_spec(build_spec(dataset, config))
-        except ChartValidationError as e:
-            warnings.append(f"A chart specification could not be built: {e}")
-        if x.chart_type is None:
-            warnings.append("The chart type could not be worked out; choose it before using the chart.")
-
-        complete_job(job, {
-            "dataset": dataset,
-            "config": config,
-            "spec": spec,
-            "extractor": x.extractor,                  # "unichart" or "llm"
-            "sent_to_ai_model": x.extractor == "llm",  # lets the page say where the image went
-            "values_are_estimated": x.values_are_estimated,
-            "warnings": warnings,
-        })
+        complete_job(job, result)
     finally:
         job.payload = "{}"
         db.session.commit()

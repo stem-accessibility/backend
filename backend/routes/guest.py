@@ -126,3 +126,61 @@ def report_public_page(public_slug):
     db.session.add(Report(public_slug=public_slug, reason=reason or None))
     db.session.commit()
     return jsonify({"reported": True}), 201
+
+
+GUEST_EXTRACTIONS_PER_IP_PER_HOUR = 20
+GUEST_IMAGE_TYPES = {"image/png", "image/jpeg", "image/webp"}
+
+
+@guest_bp.route("/guest/extract-chart", methods=["POST"])
+@require_guest
+def guest_extract_chart():
+    """Read a chart image into a table, for visitors without an account.
+
+    Guests may use only the built-in reader: the image is never sent to a third party or to an AI
+    model, so this route never passes allow_llm and never selects the LLM extractor. It runs in the
+    request (guests have no job queue), keeps nothing, and is rate-limited per address.
+    """
+    import os
+    import tempfile
+
+    from backend.chart_validation import ChartValidationError
+    from backend.pipeline.chart_extract import ExtractionError, extract_chart, extraction_options
+    from backend.pipeline.chart_result import build_chart_result
+
+    if not extraction_options()["local"]:
+        return _error(503, "Reading chart images is not available right now. Upload a CSV instead.")
+    if not limiter.allow("gx:" + client_ip(), GUEST_EXTRACTIONS_PER_IP_PER_HOUR):
+        return _error(429, "Too many charts read. Please wait a while and try again.")
+
+    file = request.files.get("file")
+    if not file or not file.filename:
+        return _error(400, "No file provided")
+    if file.mimetype not in GUEST_IMAGE_TYPES:
+        return _error(400, "Upload a PNG, JPEG or WebP image")
+    try:
+        limit = int(os.environ.get("MAX_CHART_IMAGE_BYTES", str(8 * 1024 * 1024)))
+    except ValueError:
+        limit = 8 * 1024 * 1024
+    data = file.read(limit + 1)
+    if not data:
+        return _error(400, "Empty file")
+    if len(data) > limit:
+        return _error(413, f"Image is larger than {max(limit // (1024 * 1024), 1)} MB")
+
+    suffix = {"image/jpeg": ".jpg", "image/webp": ".webp"}.get(file.mimetype, ".png")
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+        tmp.write(data)
+        path = tmp.name
+    try:
+        x = extract_chart(path, allow_llm=False, mode="unichart")
+        return jsonify(build_chart_result(x)), 200
+    except ExtractionError as e:
+        return _error(502, str(e))
+    except ChartValidationError as e:
+        return _error(422, f"The chart could not be read as a table: {e}")
+    finally:
+        try:
+            os.remove(path)
+        except OSError:
+            pass

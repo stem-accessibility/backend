@@ -2,6 +2,7 @@ from flask import Flask
 from flask_cors import CORS
 from dotenv import load_dotenv
 import os
+import re
 import click
 from backend.routes.api import api_bp
 from backend.routes.charts import charts_bp
@@ -18,6 +19,28 @@ from backend.models import (
 )
 
 
+def cors_origin_patterns(value: str) -> list:
+    """Turn a comma-separated list of origin patterns into compiled regexes.
+
+    Each pattern is a full origin where `*` stands for one or more of `a-z`, `0-9` or `-`
+    (a single hostname label part, never a dot or slash), e.g.
+    `https://frontend-git-*-stem-accessibility.vercel.app`. Patterns must be https and must
+    keep a literal domain after the last `*`; anything else is ignored so a typo cannot
+    open the API to every site.
+    """
+    compiled = []
+    for raw in value.split(","):
+        p = raw.strip().rstrip("/")
+        if not p.startswith("https://") or "*" not in p:
+            continue
+        tail = p.rsplit("*", 1)[1]
+        if "." not in tail or "/" in p[len("https://"):]:
+            continue
+        regex = re.escape(p).replace(r"\*", "[a-z0-9-]+")
+        compiled.append(re.compile(regex + r"\Z", re.IGNORECASE))
+    return compiled
+
+
 def create_app():
     load_dotenv()
 
@@ -32,7 +55,12 @@ def create_app():
 
     CORS(
         app,
-        origins=["http://localhost:3000", "http://localhost:5173", *extra_origins],
+        origins=[
+            "http://localhost:3000",
+            "http://localhost:5173",
+            *extra_origins,
+            *cors_origin_patterns(os.environ.get("CORS_ORIGIN_PATTERNS", "")),
+        ],
         allow_headers=["Content-Type", "Authorization", "X-Guest-Token"],
     )
 
