@@ -5,6 +5,9 @@ A guest is identified only by a random token the browser keeps (sent as X-Guest-
 stores a hash of it as the owner (`guest:<hash>`), so the token is the only proof of ownership and
 the database never holds it. Guests cannot use the image pipeline or any AI route, always share
 publicly, and get one image. Limits here keep that open door from being used for spam.
+
+The one exception is POST /guest/extract-chart, which reads a chart image with the built-in reader
+only. It never reaches an AI model or a third party, so it can stay open to guests.
 """
 import hashlib
 import os

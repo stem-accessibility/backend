@@ -136,9 +136,13 @@ def extract_with_unichart(image_path: str) -> ChartExtraction:
         raise ExtractionError("the built-in chart reader is not configured")
     import requests  # imported here so the module loads where requests is unavailable
 
+    headers = {}
+    if os.environ.get("UNICHART_TOKEN"):
+        headers["X-Service-Token"] = os.environ["UNICHART_TOKEN"]
     with open(image_path, "rb") as f:
         try:
-            resp = requests.post(url.rstrip("/") + "/extract", files={"image": f}, timeout=120)
+            resp = requests.post(url.rstrip("/") + "/extract", files={"image": f},
+                                 headers=headers, timeout=120)
             resp.raise_for_status()
             raw = resp.json().get("table", "")
         except Exception as e:
@@ -174,6 +178,16 @@ def extract_with_llm(image_path: str) -> ChartExtraction:
 
 
 # ---- routing -------------------------------------------------------------------------------
+
+def extraction_options():
+    """What this deployment can do, so the page can show only real choices.
+    local: the built-in reader (UniChart) is configured; no third party sees the image.
+    llm:   the AI model (Gemini via OpenRouter) is configured; it needs the person's agreement."""
+    return {
+        "local": bool(os.environ.get("UNICHART_URL")),
+        "llm": bool(os.environ.get("ACCESSFLOW_OPENROUTER_API_KEY")),
+    }
+
 
 def looks_incomplete(x: ChartExtraction) -> Optional[str]:
     """Why a local result probably needs the LLM, or None. The evaluation found the local reader
