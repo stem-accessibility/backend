@@ -192,7 +192,9 @@ def extraction_options():
     llm:   the AI model (Gemini via OpenRouter) is configured; it needs the person's agreement."""
     return {
         "local": bool(os.environ.get("UNICHART_URL")),
-        "llm": bool(os.environ.get("ACCESSFLOW_OPENROUTER_API_KEY")),
+        "llm": bool(
+            os.environ.get("GEMINI_API_KEY") or os.environ.get("ACCESSFLOW_OPENROUTER_API_KEY")
+        ),
     }
 
 
