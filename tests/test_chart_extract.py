@@ -60,8 +60,15 @@ class ParsingTests(unittest.TestCase):
     def test_normalise_makes_unique_names_and_numbers(self):
         cols, rows = ce._normalise(["Year", "Year", ""], [["2004.0", "1,5", "x"], ["2005", 2, None]])
         self.assertEqual(cols, ["Year", "Year 2", "Column 3"])
-        self.assertEqual(rows[0], ["2004.0", 15.0, "x"])
+        self.assertEqual(rows[0], ["2004", 15.0, "x"])
         self.assertEqual(rows[1], ["2005", 2.0, None])
+
+    def test_whole_number_labels_lose_the_float_suffix_but_others_do_not(self):
+        _, rows = ce._normalise(
+            ["Label", "Value"],
+            [["0.0", 1], ["12.0", 2], ["-3.0", 3], ["2.5", 4], ["1.05", 5], ["Q1.0", 6], ["10.00", 7]],
+        )
+        self.assertEqual([r[0] for r in rows], ["0", "12", "-3", "2.5", "1.05", "Q1.0", "10"])
 
     def test_chart_type_suggestion(self):
         self.assertEqual(ce.suggest_chart_type(["y", "v"], [["2004", 1], ["2005", 2]]), "line")
@@ -119,6 +126,43 @@ class SpecTests(unittest.TestCase):
     def test_no_template_means_no_spec(self):
         cfg = build_config(["Region", "Units"], "scatter")
         self.assertIsNone(build_spec(self.dataset(), cfg))
+
+    def multi_dataset(self):
+        return {
+            "columns": ["Region", "2023", "2024"],
+            "rows": [{"Region": "N", "2023": 15, "2024": 54}, {"Region": "S", "2023": 19, "2024": 73}],
+        }
+
+    def test_bar_with_several_series_keeps_every_series(self):
+        ds = self.multi_dataset()
+        spec = build_spec(ds, build_config(ds["columns"], "bar"))
+        self.assertIsNotNone(clean_spec(spec))
+        self.assertEqual(spec["transform"], [{"fold": ["2023", "2024"], "as": ["Series", "Value"]}])
+        self.assertEqual(spec["data"]["values"][0], {"Region": "N", "2023": 15, "2024": 54})
+        self.assertEqual(spec["encoding"]["xOffset"], {"field": "Series"})
+        self.assertEqual(spec["encoding"]["y"]["title"], "Value")  # not the first series' name
+
+    def test_line_with_several_series_has_one_line_per_series(self):
+        ds = self.multi_dataset()
+        spec = build_spec(ds, build_config(ds["columns"], "line"))
+        self.assertIsNotNone(clean_spec(spec))
+        self.assertEqual(spec["encoding"]["color"]["field"], "Series")
+        self.assertNotIn("xOffset", spec["encoding"])
+
+    def test_pie_still_shows_only_the_first_value_column(self):
+        ds = self.multi_dataset()
+        spec = build_spec(ds, build_config(ds["columns"], "pie"))
+        self.assertNotIn("transform", spec)
+        self.assertEqual(spec["encoding"]["theta"]["field"], "2023")
+
+    def test_generated_field_names_avoid_existing_columns(self):
+        ds = {"columns": ["Series", "a", "b"], "rows": [{"Series": "x", "a": 1, "b": 2}]}
+        spec = build_spec(ds, build_config(ds["columns"], "bar"))
+        self.assertEqual(spec["transform"][0]["as"], ["Series_", "Value"])
+
+    def test_single_series_spec_is_unchanged(self):
+        spec = build_spec(self.dataset(), build_config(["Region", "Units"], "bar"))
+        self.assertNotIn("transform", spec)
 
     def test_unknown_preset_is_dropped_from_config(self):
         self.assertIsNone(build_config(["a", "b"], "treemap")["preset"])

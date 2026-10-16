@@ -96,6 +96,13 @@ def _clean_columns(names, width):
     return out
 
 
+def _clean_label(value) -> str:
+    """A category label as text. The reader prints whole-number axis labels as floats ("2004.0",
+    "3.0"); the axis shows "2004" and "3", so drop a trailing ".0". Other labels are untouched."""
+    text = str(value).strip()
+    return re.sub(r"^(-?\d+)\.0+$", r"\1", text)
+
+
 def _normalise(columns, rows):
     """Rectangular table, unique column names, numbers where a cell holds one (first column stays
     text, since it holds labels such as years)."""
@@ -105,7 +112,7 @@ def _normalise(columns, rows):
     out = []
     for r in rows[:MAX_ROWS]:
         r = list(r) + [None] * (width - len(r))
-        cells = [str(r[0]).strip() if r[0] is not None else ""]
+        cells = [_clean_label(r[0]) if r[0] is not None else ""]
         for v in r[1:width]:
             n = parse_number(v)
             if n is not None:
@@ -195,7 +202,7 @@ def looks_incomplete(x: ChartExtraction) -> Optional[str]:
     if len(x.rows) < 2:
         return "only one row was read"
     if len(x.columns) > 2:
-        return "the chart appears to have several series"
+        return "the chart appears to have several series, or it may be a pie chart, which the built-in reader often misreads"
     numeric = sum(1 for r in x.rows for v in r[1:] if isinstance(v, (int, float)))
     if numeric == 0:
         return "no numbers were read"
