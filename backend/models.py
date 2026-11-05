@@ -51,6 +51,40 @@ class StemImage(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.datetime.utcnow, nullable=False)
 
 
+class SlideDeck(db.Model):
+    """Private upload and per-slide checkpoints for the PDF demo."""
+
+    __tablename__ = "slide_decks"
+
+    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    owner_id = db.Column(db.String(64), nullable=False, index=True)
+    filename = db.Column(db.String(255), nullable=False)
+    pdf_data = db.Column(db.LargeBinary, nullable=True)
+    page_count = db.Column(db.Integer, nullable=False)
+    pages_json = db.Column(db.Text, nullable=False)
+    job_id = db.Column(db.Integer, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.datetime.utcnow, nullable=False)
+
+
+class DeckDiagram(db.Model):
+    __tablename__ = "deck_diagrams"
+    __table_args__ = (
+        db.UniqueConstraint("deck_id", "page_number", "position", name="uq_deck_region"),
+    )
+
+    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    deck_id = db.Column(db.String(36), db.ForeignKey("slide_decks.id"), nullable=False, index=True)
+    page_number = db.Column(db.Integer, nullable=False)
+    position = db.Column(db.Integer, nullable=False)
+    title = db.Column(db.String(200), nullable=False)
+    kind = db.Column(db.String(40), nullable=False)
+    box_json = db.Column(db.Text, nullable=False)
+    image_id = db.Column(db.String(36), nullable=False)
+    flowchart_id = db.Column(db.String(36), nullable=True)
+    status = db.Column(db.String(32), nullable=False, default="queued")
+    error = db.Column(db.Text, nullable=True)
+
+
 class LongDescription(db.Model):
     __tablename__ = "long_descriptions"
     id = db.Column(db.Integer, primary_key=True)

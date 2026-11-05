@@ -25,7 +25,9 @@ def upgrade():
         'long_descriptions',
         sa.Column('image_public', sa.Boolean(), nullable=False, server_default=sa.true()),
     )
-    op.alter_column('long_descriptions', 'image_public', server_default=sa.false())
+    # SQLite cannot ALTER a column default directly; batch mode recreates the table.
+    with op.batch_alter_table('long_descriptions') as batch_op:
+        batch_op.alter_column('image_public', server_default=sa.false())
 
 
 def downgrade():

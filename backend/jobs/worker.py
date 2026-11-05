@@ -4,6 +4,13 @@ import time
 import tempfile
 from datetime import datetime, timezone
 
+from dotenv import load_dotenv
+
+# Match the web entry point before auth/config modules are imported.
+if __name__ == "__main__":
+    load_dotenv(".env.local")
+    load_dotenv()
+
 from backend.app_factory import create_app
 from backend.db import db
 from backend.models import Job
@@ -167,6 +174,12 @@ def process_extract_chart_job(job: Job, payload: dict):
 def process_job(job: Job):
     payload = json.loads(job.payload or "{}")
 
+    if job.type == "process_deck":
+        from backend.jobs.decks import process_deck
+
+        complete_job(job, process_deck(payload["deck_id"], process_image))
+        return
+
     if job.type == "extract_chart":
         process_extract_chart_job(job, payload)
         return
@@ -237,7 +250,14 @@ def run_worker_loop(app):
 
 
 def main():
-    run_worker_loop(create_app())
+    app = create_app()
+    # This queue supports one worker. Resume deck checkpoints after a worker restart.
+    with app.app_context():
+        Job.query.filter_by(type="process_deck", status="running").update(
+            {"status": "queued", "started_at": None}, synchronize_session=False
+        )
+        db.session.commit()
+    run_worker_loop(app)
 
 
 if __name__ == "__main__":

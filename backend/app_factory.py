@@ -8,6 +8,7 @@ from backend.routes.api import api_bp
 from backend.routes.charts import charts_bp
 from backend.routes.jobs import jobs_bp
 from backend.routes.guest import guest_bp
+from backend.routes.decks import DeckUploadRequest, decks_bp
 from backend.db import db, migrate
 from backend.models import (
     Flowchart,
@@ -45,6 +46,7 @@ def create_app():
     load_dotenv()
 
     app = Flask(__name__)
+    app.request_class = DeckUploadRequest
 
     # Comma-separated list of extra allowed origins, e.g. the deployed frontend URL.
     extra_origins = [
@@ -83,6 +85,7 @@ def create_app():
     app.register_blueprint(api_bp)
     app.register_blueprint(charts_bp)
     app.register_blueprint(guest_bp)
+    app.register_blueprint(decks_bp)
 
     # Schema changes go through Alembic (`flask db upgrade`, see README). create_all()
     # is only a convenience for throwaway local SQLite databases.
