@@ -9,15 +9,17 @@ lists only what falls to the backend.
 
 - The worker imports the image pipeline only for flowchart uploads, so chart and summary jobs and the
   tests run without torch, YOLO and Google Vision.
-- CI runs the unit tests on every push and pull request.
+- CI runs the unit tests on pull requests and pushes to `main`.
 
 ## Next
 
 - **Per-account upload quota** (README, known gaps), before any wider rollout.
-- **Contracted braille**: `POST /braille` that returns contracted (grade 2) UEB as a .brf, using
-  liblouis (`apt install liblouis-bin python3-louis` in the Dockerfile). The frontend already makes
-  uncontracted braille in the browser; this adds the grade most adult readers use. Liblouis is
-  LGPL-2.1, used as a separate library.
+- **Contracted braille** (asked for in review of the frontend's braille pull request), if the
+  decision is to run liblouis on the server: `POST /braille` that returns contracted (grade 2) UEB
+  as a .brf, using liblouis (`apt install liblouis-bin python3-louis` in the Dockerfile). The
+  frontend already makes uncontracted braille in the browser; this adds the grade most adult readers
+  use. The alternative is liblouis compiled to WebAssembly in the browser, which needs no backend
+  work (frontend roadmap, decision 2). Liblouis is LGPL-2.1, used as a separate library.
 - **Campus workflow** tables: `organizations`, `memberships`, `courses`, `collections`,
   `collection_items`, `requests`. Each needs RLS enabled in its migration, like every backend table.
   Needs decisions first (see the frontend roadmap, "Decisions needed").
