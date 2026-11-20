@@ -1,7 +1,10 @@
 name: CI
 
 on:
+  # Pull requests get their own run, so push runs only for main (otherwise a
+  # branch in this repository with an open pull request is tested twice).
   push:
+    branches: [main]
   pull_request:
 
 permissions:

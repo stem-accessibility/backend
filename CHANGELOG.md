@@ -7,7 +7,7 @@ database change lists the migration to run **before** deploying (`make migrate`)
 ## [Unreleased]
 
 ### Added
-- CI (GitHub Actions): the unit tests on Python 3.12 on every push and pull request, installed
+- CI (GitHub Actions): the unit tests on Python 3.12 on every pull request and push to `main`, installed
   without the image pipeline's machine-learning packages.
 - Chart image upload: a picture of a chart becomes an editable data table, a suggested chart type
   and a Vega-Lite spec.
